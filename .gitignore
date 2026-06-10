@@ -1,0 +1,47 @@
+# node
+node_modules/
+*.log
+.npm
+.pnpm-store/
+
+# build
+dist/
+build/
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# python (aligner runs without venv but keep this so cwd activations don't leak)
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+
+# rust / tauri (when pipeline gets scaffolded)
+target/
+
+# secrets
+*.pem
+*.key
+
+# aligner has its own repo at Worship_Suite/aligner/ — do not double-track
+aligner/
+
+# scratch space (1.3GB of venvs + raw audio) — never tracked
+scratch/
+
+# Supabase CLI internal cache
+supabase/.temp/
+supabase/.branches/

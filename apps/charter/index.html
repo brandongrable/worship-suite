@@ -1,0 +1,1644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chart Formatter</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    @media print {
+      body * { visibility: hidden !important; }
+      #print-area, #print-area * { visibility: visible !important; }
+      #print-area { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; margin: 0 !important; padding: 0.5in !important; }
+    }
+    * { scrollbar-width: thin; scrollbar-color: #374151 transparent; }
+    body { margin: 0; padding: 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useEffect, useCallback } = React;
+
+    // ─── INLINE SVG ICONS (replacing lucide-react) ─────────────────────────
+    const Icon = ({ d, size = 24, className = '', ...props }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{d}</svg>
+    );
+    const Plus = (p) => <Icon {...p} d={<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>} />;
+    const Trash2 = (p) => <Icon {...p} d={<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14H7L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></>} />;
+    const Lock = (p) => <Icon {...p} d={<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>} />;
+    const Unlock = (p) => <Icon {...p} d={<><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></>} />;
+    const Music = (p) => <Icon {...p} d={<><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></>} />;
+    const Save = (p) => <Icon {...p} d={<><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>} />;
+    const Upload = (p) => <Icon {...p} d={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>} />;
+    const ChevronUp = (p) => <Icon {...p} d={<polyline points="18 15 12 9 6 15"/>} />;
+    const ChevronDown = (p) => <Icon {...p} d={<polyline points="6 9 12 15 18 9"/>} />;
+    const X = (p) => <Icon {...p} d={<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>} />;
+    const GripVertical = (p) => <Icon {...p} d={<><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></>} />;
+    const Eye = (p) => <Icon {...p} d={<><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></>} />;
+    const Edit3 = (p) => <Icon {...p} d={<><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></>} />;
+    const FileDown = (p) => <Icon {...p} d={<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></>} />;
+    const UploadCloud = (p) => <Icon {...p} d={<><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/><polyline points="16 16 12 12 8 16"/></>} />;
+    const Loader2 = (p) => <Icon {...p} d={<path d="M21 12a9 9 0 1 1-6.219-8.56"/>} />;
+    const AlertCircle = (p) => <Icon {...p} d={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>} />;
+    const CheckCircle2 = (p) => <Icon {...p} d={<><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></>} />;
+    const Undo2 = (p) => <Icon {...p} d={<><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11"/></>} />;
+    const Redo2 = (p) => <Icon {...p} d={<><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13"/></>} />;
+
+
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
+const NOTES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const NOTES_FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+const ALL_KEYS = ['A','Bb','B','C','C#','D','Eb','E','F','F#','G','Ab'];
+const TIME_SIGS = ['2/4','3/4','4/4','5/4','6/4','6/8','7/8','12/8'];
+
+const SECTION_TYPES = [
+  { value: 'INTRO', label: 'Intro', code: 'I', patterns: ['INTRO'] },
+  { value: 'VERSE', label: 'Verse', code: 'V', patterns: ['VERSE'] },
+  { value: 'PRE-CHORUS', label: 'Pre-Chorus', code: 'Pc', patterns: ['PRE CHORUS','PRE-CHORUS','PRECHORUS'] },
+  { value: 'CHORUS', label: 'Chorus', code: 'C', patterns: ['CHORUS'] },
+  { value: 'BRIDGE', label: 'Bridge', code: 'Br', patterns: ['BRIDGE'] },
+  { value: 'TAG', label: 'Tag', code: 'Tg', patterns: ['TAG'] },
+  { value: 'OUTRO', label: 'Outro', code: 'O', patterns: ['OUTRO'] },
+  { value: 'ENDING', label: 'Ending', code: 'E', patterns: ['ENDING'] },
+  { value: 'INSTRUMENTAL', label: 'Instrumental', code: 'Inst', patterns: ['INSTRUMENTAL'] },
+  { value: 'INTERLUDE', label: 'Interlude', code: 'Int', patterns: ['INTERLUDE'] },
+  { value: 'VAMP', label: 'Vamp', code: 'Vp', patterns: ['VAMP'] },
+  { value: 'TURNAROUND', label: 'Turnaround', code: 'Tn', patterns: ['TURNAROUND'] },
+];
+
+const FOOTER_TAGS = ['Male-led', 'Female-led', 'Co-led', 'Acoustic', 'Full Band', 'Keys Only'];
+
+// Chord detection regex — matches standard chord names
+const CHORD_RE = /^[A-G][#b♯♭]?(m|maj|min|dim|aug|sus[24]?|add[2-9]|[2-9]|11|13|6\/9)?(\/[A-G][#b♯♭]?)?$/;
+const CHORD_MODIFIER_RE = /^(sus[24]?|add[2-9]|maj[0-9]*|dim|aug|[0-9]+)$/;
+
+// ─── UTILITIES ───────────────────────────────────────────────────────────────
+let _id = 0;
+const uid = () => `id_${Date.now()}_${++_id}`;
+
+function parseChordRoot(chord) {
+  const m = chord.match(/^([A-G][#b♯♭]?)(.*?)(?:\/([A-G][#b♯♭]?)(.*))?$/);
+  if (!m) return null;
+  return { root: m[1], quality: m[2] || '', bass: m[3] || null, bassQuality: m[4] || '' };
+}
+
+function transposeNote(note, semi, useFlats) {
+  const src = useFlats ? NOTES_FLAT : NOTES_SHARP;
+  let i = NOTES_SHARP.indexOf(note);
+  if (i === -1) i = NOTES_FLAT.indexOf(note);
+  if (i === -1) return note;
+  return src[((i + semi) % 12 + 12) % 12];
+}
+
+function transposeChord(name, semi, useFlats = false) {
+  if (!semi) return name;
+  const p = parseChordRoot(name);
+  if (!p) return name;
+  let r = transposeNote(p.root, semi, useFlats) + p.quality;
+  if (p.bass) r += '/' + transposeNote(p.bass, semi, useFlats) + p.bassQuality;
+  return r;
+}
+
+function getDisplayKey(originalKey, semi, useFlats) {
+  if (!originalKey || !semi) return originalKey;
+  return transposeNote(originalKey, semi, useFlats);
+}
+
+function makeLine(lyrics = '', chords = []) {
+  return { id: uid(), lyrics, chords };
+}
+
+function makeSection(type = 'VERSE', num = 1, notes = '', lines = null) {
+  return {
+    id: uid(), type, instanceNumber: num,
+    productionNotes: notes,
+    lines: lines || [makeLine()],
+    mirrorSourceId: null,
+    mirrorEnabled: false,
+  };
+}
+
+function makeInitialState() {
+  return {
+    metadata: { title: '', artist: '', key: 'C', tempo: '', time: '4/4', arrangementName: '' },
+    sections: [makeSection('INTRO', 0)],
+    songForm: '',
+    footerTags: [],
+    transposeSemitones: 0,
+    useFlats: false,
+    sourcePdfBase64: null,
+    sourcePdfName: null,
+  };
+}
+
+// ─── PDF PARSER ──────────────────────────────────────────────────────────────
+const PDFJS_VERSION = '3.11.174';
+const PDFJS_CDN = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
+
+function loadPdfJs() {
+  return new Promise((resolve, reject) => {
+    if (window.pdfjsLib) return resolve(window.pdfjsLib);
+    const s = document.createElement('script');
+    s.src = `${PDFJS_CDN}/pdf.min.js`;
+    s.onload = () => {
+      const lib = window['pdfjs-dist/build/pdf'];
+      lib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.js`;
+      window.pdfjsLib = lib;
+      resolve(lib);
+    };
+    s.onerror = () => reject(new Error('Failed to load PDF.js'));
+    document.head.appendChild(s);
+  });
+}
+
+async function extractPdfSpans(pdfData) {
+  const lib = await loadPdfJs();
+  const doc = await lib.getDocument({ data: pdfData }).promise;
+  const allSpans = [];
+
+  // Debug: collect all unique font signatures
+  const fontSigs = new Set();
+
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const viewport = page.getViewport({ scale: 1 });
+    const content = await page.getTextContent();
+
+    // Debug: log styles object for page 1
+    if (p === 1) {
+      console.log('[PDF DEBUG] Page 1 styles:', JSON.stringify(content.styles, null, 2));
+      console.log('[PDF DEBUG] First 10 items:', content.items.slice(0, 10).map(i => ({
+        str: i.str, fontName: i.fontName, transform: i.transform, width: i.width, height: i.height
+      })));
+    }
+
+    for (const item of content.items) {
+      if (!item.str || !item.str.trim()) continue;
+      const tx = item.transform;
+      const fontSize = Math.round((Math.abs(tx[0]) || Math.abs(tx[3])) * 10) / 10;
+      const x = Math.round(tx[4] * 10) / 10;
+      const y = Math.round((viewport.height - tx[5]) * 10) / 10;
+      const fontName = item.fontName || '';
+
+      // Try multiple ways to detect bold
+      const style = content.styles?.[fontName] || {};
+      const fontFamily = style.fontFamily || '';
+      const fontWeight = style.fontWeight || '';
+      const isBold =
+        fontName.toLowerCase().includes('bold') ||
+        fontFamily.toLowerCase().includes('bold') ||
+        fontWeight === 'bold' ||
+        fontWeight >= 700 ||
+        // Some PDFs encode bold in font name patterns like "ABCDEF+FontName-Bold"
+        /bold/i.test(fontName) ||
+        /Bold/.test(fontName);
+
+      const sig = `${fontName}|${fontSize}|${isBold ? 'B' : 'R'}`;
+      if (!fontSigs.has(sig)) {
+        fontSigs.add(sig);
+        console.log(`[PDF DEBUG] Font sig: name="${fontName}" family="${fontFamily}" weight="${fontWeight}" size=${fontSize} bold=${isBold} sample="${item.str.trim().substring(0, 30)}"`);
+      }
+
+      allSpans.push({
+        text: item.str.trim(),
+        x, y, fontSize, fontFamily, fontName, isBold,
+        page: p,
+        width: item.width || 0,
+      });
+    }
+  }
+
+  console.log(`[PDF DEBUG] Total spans extracted: ${allSpans.length}`);
+  console.log(`[PDF DEBUG] Unique font sigs: ${fontSigs.size}`);
+  return allSpans;
+}
+
+function classifySpan(span) {
+  const { fontSize, isBold, text, fontName, y } = span;
+  const sz = fontSize;
+
+  // Title: largest text (~18+pt)
+  if (sz > 18) return 'title';
+
+  // Check for section label by CONTENT first (any size > 12)
+  if (sz > 12) {
+    const upper = text.toUpperCase().replace(/\s*\d+$/, '').trim();
+    const isSectionName = SECTION_TYPES.some(t => t.patterns.some(p => upper === p || upper.startsWith(p + ' ')));
+    if (isSectionName) return 'sectionLabel';
+  }
+
+  // Metadata labels at any reasonable size
+  if (['Key:', 'Tempo:', 'Time:', 'Page:'].includes(text)) return 'metaLabel';
+
+  // Artist: near top of page, moderate size
+  if (sz > 10 && sz < 12 && y < 100) return 'artist';
+
+  // Chord modifiers: small text matching modifier patterns
+  if (sz < 12 && CHORD_MODIFIER_RE.test(text)) return 'chordModifier';
+
+  // Small metadata/codes: < 12pt
+  if (sz < 12) {
+    if (/^\d\/\d$/.test(text) || /^\d+$/.test(text) || /^\d\/\d+$/.test(text)) return 'metaValue';
+    const isSectionCode = SECTION_TYPES.some(t => text === t.code) || /^[A-Z][a-z]?[0-9]*$/.test(text);
+    if (isSectionCode && text.length <= 4) return 'sectionCode';
+    if (text === 'Page:' || text === 'Key:' || text === 'Tempo:' || text === 'Time:') return 'metaLabel';
+    // Short metadata values
+    if (text.length <= 5) return 'metaValue';
+    // Longer text at small size = production note
+    return 'productionNote';
+  }
+
+  // 12+ pt range: chords vs lyrics
+  // Use content-based detection
+  if (isChordLike(text)) return 'chord';
+
+  // If it's a very short word (1-2 chars) starting with A-G at music size, likely a chord
+  if (text.length <= 2 && /^[A-G]/.test(text)) return 'chord';
+
+  // Everything else is lyrics
+  return 'lyric';
+}
+
+function isChordLike(text) {
+  // Trim and normalize
+  const t = text.trim();
+  if (!t) return false;
+
+  // Must start with a note letter
+  if (!/^[A-Ga-g]/.test(t)) return false;
+
+  // Single note letter: A, B, C, D, E, F, G
+  if (/^[A-G]$/.test(t)) return true;
+
+  // Note with accidental: C#, Bb, F#, etc
+  if (/^[A-G][#b♯♭]$/.test(t)) return true;
+
+  // Standard chord patterns: Em, Cmaj7, Fsus4, G/B, B/D#, Gadd9, etc
+  if (/^[A-G][#b♯♭]?(m|maj|min|dim|aug|sus[24]?|add[2-9]|[0-9]+)/.test(t)) return true;
+
+  // Slash chords: G/B, E/G#, B/D#
+  if (/^[A-G][#b♯♭]?.*\/[A-G][#b♯♭]?/.test(t)) return true;
+
+  // Short chord-like text (1-8 chars starting with note) — NOT a common English word
+  if (t.length <= 8 && /^[A-G][#b♯♭]?/.test(t)) {
+    // Reject common words that start with A-G
+    const lc = t.toLowerCase();
+    const commonWords = ['a','an','and','are','as','at','be','but','by','can','do','for','get','go','got','am','all','big','bad','bed','bit','boy','car','day','did','eat','end','far','few','fun','gave','god'];
+    if (commonWords.includes(lc)) return false;
+    // If it has numbers or music symbols, it's likely a chord
+    if (/[0-9#b♯♭\/]/.test(t)) return true;
+  }
+
+  return false;
+}
+
+function parsePdfToState(allSpans) {
+  // 1. Classify all spans
+  const classified = allSpans.map(s => ({ ...s, type: classifySpan(s) }));
+
+  // Debug: show classification distribution
+  const typeCounts = {};
+  classified.forEach(s => { typeCounts[s.type] = (typeCounts[s.type] || 0) + 1; });
+  console.log('[PARSE DEBUG] Classification distribution:', typeCounts);
+
+  // Debug: show first 30 classified spans
+  console.log('[PARSE DEBUG] First 30 classified spans:');
+  classified.slice(0, 30).forEach(s => {
+    console.log(`  [${s.type.padEnd(16)}] x=${s.x.toString().padStart(6)} y=${s.y.toString().padStart(6)} sz=${s.fontSize.toString().padStart(5)} bold=${s.isBold} "${s.text}"`);
+  });
+
+  // 2. Extract metadata
+  const titleSpan = classified.find(s => s.type === 'title');
+  const artistSpan = classified.find(s => s.type === 'artist');
+  console.log('[PARSE DEBUG] Title:', titleSpan?.text, '| Artist:', artistSpan?.text);
+
+  let key = 'C', tempo = '', time = '4/4';
+  const metaLabels = classified.filter(s => s.type === 'metaLabel');
+  for (const label of metaLabels) {
+    // Find the next metaValue span to the right of this label on the same y-line
+    const vals = classified.filter(s =>
+      s.type === 'metaValue' &&
+      Math.abs(s.y - label.y) < 3 &&
+      s.x > label.x &&
+      s.x < label.x + 60
+    ).sort((a, b) => a.x - b.x);
+    if (vals.length > 0) {
+      if (label.text === 'Key:') key = vals[0].text;
+      if (label.text === 'Tempo:') tempo = vals[0].text;
+      if (label.text === 'Time:') time = vals[0].text;
+    }
+  }
+
+  // 3. Find page width to detect columns
+  const maxX = Math.max(...allSpans.map(s => s.x + (s.width || 0)));
+  const pageWidth = maxX > 400 ? maxX : 600;
+  const colSplit = pageWidth * 0.48;
+  console.log('[PARSE DEBUG] Page width:', pageWidth, '| Column split at:', colSplit);
+
+  // 4. Find section headers (sectionLabel type)
+  const sectionLabels = classified.filter(s => s.type === 'sectionLabel');
+  console.log('[PARSE DEBUG] Section labels found:', sectionLabels.length, sectionLabels.map(s => `"${s.text}" at (${s.x},${s.y})`));
+
+  // 5. Get all content spans (chords, lyrics, production notes, chord modifiers)
+  const contentSpans = classified.filter(s =>
+    ['chord', 'lyric', 'productionNote', 'chordModifier', 'sectionCode'].includes(s.type)
+  );
+
+  // 6. For each section label, find its section code (just to the left on the same line)
+  const sectionHeaders = sectionLabels.map(label => {
+    const nearbyCode = classified.find(s =>
+      s.type === 'sectionCode' &&
+      Math.abs(s.y - label.y) < 5 &&
+      s.x < label.x &&
+      s.x > label.x - 40
+    );
+
+    // Determine section type from the label text
+    const labelText = label.text.toUpperCase().replace(/\s*\d+$/, '');
+    const numMatch = label.text.match(/(\d+)$/);
+    const num = numMatch ? parseInt(numMatch[1]) : 0;
+
+    let sectionType = 'VERSE';
+    for (const st of SECTION_TYPES) {
+      if (st.patterns.some(p => labelText.includes(p))) {
+        sectionType = st.value;
+        break;
+      }
+    }
+
+    return {
+      type: sectionType,
+      instanceNumber: num,
+      x: label.x,
+      y: label.y,
+      page: label.page,
+      code: nearbyCode?.text || '',
+      isRightColumn: label.x > colSplit,
+    };
+  });
+
+  // 7. Sort sections by reading order: page → column → y position
+  sectionHeaders.sort((a, b) => {
+    if (a.page !== b.page) return a.page - b.page;
+    // Left column before right column on same page
+    if (a.isRightColumn !== b.isRightColumn) return a.isRightColumn ? 1 : -1;
+    return a.y - b.y;
+  });
+
+  // 8. Assign content spans to sections
+  const sections = [];
+
+  for (let si = 0; si < sectionHeaders.length; si++) {
+    const sh = sectionHeaders[si];
+
+    // Determine the bounding region for this section's content
+    // Content belongs to this section if it's:
+    // - Below the section header
+    // - In the same column
+    // - Above the next section header in the same column (or end of page)
+    const sameColumnHeaders = sectionHeaders.filter(h =>
+      h.page === sh.page && h.isRightColumn === sh.isRightColumn && h.y > sh.y
+    ).sort((a, b) => a.y - b.y);
+
+    const yMin = sh.y + 5; // Just below header
+    const yMax = sameColumnHeaders.length > 0 ? sameColumnHeaders[0].y - 2 : 9999;
+    const xMin = sh.isRightColumn ? colSplit : 0;
+    const xMax = sh.isRightColumn ? 9999 : colSplit;
+
+    const sectionContent = contentSpans.filter(s =>
+      s.page === sh.page &&
+      s.y >= yMin && s.y < yMax &&
+      s.x >= xMin && s.x < xMax
+    ).sort((a, b) => a.y - b.y || a.x - b.x);
+
+    // 9. Separate production notes from chord/lyric content
+    // Use both type classification AND content-based detection for production notes
+    const prodNotes = [];
+    const musicContent = [];
+
+    for (const s of sectionContent) {
+      if (s.type === 'productionNote') {
+        prodNotes.push(s);
+      } else if (isProductionNoteByContent(s.text)) {
+        // Catch production notes that were classified as lyrics due to font size
+        prodNotes.push(s);
+      } else if (s.type === 'chord' || s.type === 'lyric' || s.type === 'chordModifier') {
+        musicContent.push(s);
+      }
+    }
+
+    // 10. Group music content into lines by y-proximity
+    const yLines = [];
+    let currentLineY = -999;
+    let currentLine = [];
+
+    for (const span of musicContent) {
+      // Use wider tolerance (6px) since chord modifiers may have slightly different y
+      if (Math.abs(span.y - currentLineY) > 6) {
+        if (currentLine.length > 0) yLines.push({ y: currentLineY, spans: currentLine });
+        currentLine = [span];
+        currentLineY = span.y;
+      } else {
+        currentLine.push(span);
+      }
+    }
+    if (currentLine.length > 0) yLines.push({ y: currentLineY, spans: currentLine });
+
+    // 11. Merge chord modifiers into their parent chords
+    // First pass: merge modifiers on the same y-line
+    for (const yl of yLines) {
+      // Sort by x position
+      yl.spans.sort((a, b) => a.x - b.x);
+      const merged = [];
+      for (let i = 0; i < yl.spans.length; i++) {
+        const s = yl.spans[i];
+        if (s.type === 'chordModifier' && merged.length > 0) {
+          // Find the nearest chord to the left
+          const prev = merged[merged.length - 1];
+          if (prev.type === 'chord') {
+            // Estimate the end of the previous chord
+            const prevEstEnd = prev.x + (prev.width > 0 ? prev.width : prev.text.length * 8);
+            // If modifier is within 15px of the chord's estimated end, merge
+            if (s.x - prevEstEnd < 15 && s.x >= prev.x) {
+              prev.text += s.text;
+              prev.width = (s.x + (s.width || s.text.length * 6)) - prev.x;
+              continue;
+            }
+          }
+          // If no chord to merge with, treat as standalone chord
+          merged.push({ ...s, type: 'chord' });
+        } else {
+          merged.push({ ...s });
+        }
+      }
+      yl.spans = merged;
+    }
+
+    // Second pass: merge modifiers across y-lines (modifier on line below chord)
+    for (let yi = 0; yi < yLines.length; yi++) {
+      const line = yLines[yi];
+      const nextLine = yLines[yi + 1];
+      if (!nextLine) continue;
+
+      // Check if next line is ONLY modifiers
+      const nextAllMods = nextLine.spans.every(s => s.type === 'chordModifier');
+      if (!nextAllMods) continue;
+
+      // Try to merge each modifier into the nearest chord above
+      const remainingMods = [];
+      for (const mod of nextLine.spans) {
+        const nearestChord = line.spans.filter(s => s.type === 'chord')
+          .reduce((best, c) => {
+            const dist = Math.abs(c.x - mod.x);
+            return (!best || dist < best.dist) ? { chord: c, dist } : best;
+          }, null);
+
+        if (nearestChord && nearestChord.dist < 20) {
+          nearestChord.chord.text += mod.text;
+        } else {
+          remainingMods.push(mod);
+        }
+      }
+
+      if (remainingMods.length === 0) {
+        // Remove the modifier line entirely
+        yLines.splice(yi + 1, 1);
+        yi--; // re-check current index
+      } else {
+        nextLine.spans = remainingMods;
+      }
+    }
+
+    // 12. Pair chord lines with lyric lines
+    // Pattern: a line of all chords is followed by a line of lyrics
+    const pairedLines = [];
+
+    for (let li = 0; li < yLines.length; li++) {
+      const line = yLines[li];
+      const allChords = line.spans.every(s => s.type === 'chord' || s.type === 'chordModifier');
+      const hasChords = line.spans.some(s => s.type === 'chord');
+      const hasLyrics = line.spans.some(s => s.type === 'lyric');
+
+      if (allChords && hasChords) {
+        // Look ahead for a lyric line
+        const nextLine = yLines[li + 1];
+        if (nextLine && nextLine.spans.some(s => s.type === 'lyric')) {
+          // Pair them
+          pairedLines.push({
+            chordSpans: line.spans.filter(s => s.type === 'chord'),
+            lyricSpans: nextLine.spans.filter(s => s.type === 'lyric'),
+          });
+          li++; // Skip the lyric line
+        } else {
+          // Chord-only line (like an intro instrumental line)
+          pairedLines.push({
+            chordSpans: line.spans.filter(s => s.type === 'chord'),
+            lyricSpans: [],
+          });
+        }
+      } else if (hasChords && hasLyrics) {
+        // Mixed line — chords and lyrics interleaved
+        // This is the Multitracks format: chord appears above its lyric on the same conceptual line
+        // but actually they're on separate y-positions; if they're merged here, separate them
+        pairedLines.push({
+          chordSpans: line.spans.filter(s => s.type === 'chord'),
+          lyricSpans: line.spans.filter(s => s.type === 'lyric'),
+        });
+      } else if (hasLyrics && !hasChords) {
+        // Lyric-only line
+        pairedLines.push({
+          chordSpans: [],
+          lyricSpans: line.spans,
+        });
+      }
+    }
+
+    // 13. Convert paired lines to our data model
+    const lines = pairedLines.map(pair => {
+      // Build lyric string from spans
+      const lyricText = buildLyricString(pair.lyricSpans);
+
+      // Build chords with charIndex based on x-position mapping to lyric characters
+      const chords = pair.chordSpans.map(cs => {
+        let charIndex = 0;
+        if (pair.lyricSpans.length > 0 && lyricText.length > 0) {
+          // Map chord x-position to character index in lyric string
+          charIndex = xPositionToCharIndex(cs.x, pair.lyricSpans, lyricText);
+        } else {
+          // No lyrics — space chords evenly
+          charIndex = Math.round((cs.x - (sh.isRightColumn ? colSplit : 0)) / 8);
+        }
+        return {
+          id: uid(),
+          name: cs.text,
+          charIndex: Math.max(0, charIndex),
+          isLocked: true,
+          manualOffset: 0,
+        };
+      });
+
+      return makeLine(lyricText, chords);
+    });
+
+    const productionNotesText = prodNotes.map(p => p.text).join('\n');
+
+    sections.push(makeSection(
+      sh.type,
+      sh.instanceNumber,
+      productionNotesText,
+      lines.length > 0 ? lines : [makeLine()]
+    ));
+  }
+
+  // Build song form from section order
+  const songForm = sections.map(s => {
+    const t = SECTION_TYPES.find(st => st.value === s.type);
+    const code = t ? t.code : '?';
+    return s.instanceNumber > 0 ? `${code}${s.instanceNumber}` : code;
+  }).join('  ');
+
+  return {
+    metadata: {
+      title: titleSpan?.text || '',
+      artist: artistSpan?.text || '',
+      key,
+      tempo,
+      time,
+      arrangementName: '',
+    },
+    sections: sections.length > 0 ? sections : [makeSection('INTRO', 0)],
+    songForm,
+    footerTags: [],
+    transposeSemitones: 0,
+    useFlats: false,
+  };
+}
+
+function buildLyricString(lyricSpans) {
+  if (lyricSpans.length === 0) return '';
+  const sorted = [...lyricSpans].sort((a, b) => a.x - b.x);
+
+  // First, estimate character width from the longest span
+  let estCharW = 7; // fallback
+  for (const s of sorted) {
+    if (s.width > 0 && s.text.length > 2) {
+      estCharW = s.width / s.text.length;
+      break;
+    }
+  }
+
+  let result = '';
+  for (let i = 0; i < sorted.length; i++) {
+    const span = sorted[i];
+    if (i > 0) {
+      const prevSpan = sorted[i - 1];
+      const prevEndX = prevSpan.x + (prevSpan.width > 0 ? prevSpan.width : prevSpan.text.length * estCharW);
+      const gap = span.x - prevEndX;
+
+      // If there's any meaningful gap, insert a space
+      // Even a tiny gap (> half a character width) means the PDF had whitespace
+      if (gap > estCharW * 0.3) {
+        result += ' ';
+      } else if (gap > 0) {
+        // Very small gap — check if the previous span doesn't end with space
+        // and current doesn't start with space; if both are letters, add space
+        const prevEnd = prevSpan.text.slice(-1);
+        const curStart = span.text[0];
+        if (/[a-zA-Z,.]/.test(prevEnd) && /[a-zA-Z]/.test(curStart)) {
+          result += ' ';
+        }
+      }
+    }
+    result += span.text;
+  }
+  return result;
+}
+
+function xPositionToCharIndex(chordX, lyricSpans, lyricText) {
+  if (lyricSpans.length === 0 || !lyricText) return 0;
+  const sorted = [...lyricSpans].sort((a, b) => a.x - b.x);
+  const baseX = sorted[0].x;
+
+  // Estimate char width from spans with width data
+  let estCharW = 7;
+  for (const s of sorted) {
+    if (s.width > 0 && s.text.length > 2) {
+      estCharW = s.width / s.text.length;
+      break;
+    }
+  }
+
+  // Build a character position map: for each character in lyricText, estimate its x position
+  // by walking through spans
+  const charPositions = [];
+  let charIdx = 0;
+  for (let si = 0; si < sorted.length; si++) {
+    const span = sorted[si];
+    const spanCharW = span.width > 0 ? span.width / span.text.length : estCharW;
+
+    // Account for gap (space) between previous span and this one
+    if (si > 0) {
+      const prevSpan = sorted[si - 1];
+      const prevEndX = prevSpan.x + (prevSpan.width > 0 ? prevSpan.width : prevSpan.text.length * estCharW);
+      if (span.x - prevEndX > estCharW * 0.3) {
+        // There's a space character we inserted
+        charPositions.push({ idx: charIdx, x: prevEndX });
+        charIdx++;
+      }
+    }
+
+    for (let ci = 0; ci < span.text.length; ci++) {
+      charPositions.push({ idx: charIdx, x: span.x + ci * spanCharW });
+      charIdx++;
+    }
+  }
+
+  // Find closest character to the chord x position
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  for (const cp of charPositions) {
+    const dist = Math.abs(cp.x - chordX);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = cp.idx;
+    }
+  }
+  return bestIdx;
+}
+
+// ─── STYLES ──────────────────────────────────────────────────────────────────
+
+// Production note content patterns
+const PROD_NOTE_PATTERNS = [
+  /full band/i, /half time/i, /double time/i, /band in/i, /band out/i,
+  /drums?\s*(in|out|&)/i, /electric\s*guitar/i, /acoustic/i, /piano/i,
+  /pad/i, /strings/i, /softly/i, /loudly/i, /build/i, /breakdown/i,
+  /increase\s*dynamics/i, /decrease\s*dynamics/i, /bring\s*down/i,
+  /drop\s*to/i, /groove/i, /driving/i, /rolling/i, /snare/i,
+  /all\s*in/i, /joins?\s*on/i, /slowly/i, /freely/i,
+  /intro\s*groove/i, /band\s*joins/i, /full\s*groove/i,
+];
+
+function isProductionNoteByContent(text) {
+  if (!text || text.length < 6) return false;
+  // If it matches known production note phrases
+  if (PROD_NOTE_PATTERNS.some(p => p.test(text))) return true;
+  // If it's a longer phrase (> 15 chars) that doesn't look like lyrics
+  // Production notes tend to be descriptive instructions
+  if (text.length > 18 && /^[A-Z]/.test(text) && !/[,!?.]$/.test(text)) {
+    // Check it doesn't contain common lyric patterns
+    if (!/\b(I|my|me|you|your|we|our|the|and|love|heart|soul)\b/i.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const font = `'JetBrains Mono', 'Fira Code', 'Source Code Pro', monospace`;
+const uiFont = `'DM Sans', system-ui, sans-serif`;
+
+// ─── PDF UPLOAD ZONE ─────────────────────────────────────────────────────────
+function PdfUploadZone({ onParsed, onClose }) {
+  const [dragging, setDragging] = useState(false);
+  const [parsing, setParsing] = useState(false);
+  const [error, setError] = useState(null);
+  const [progress, setProgress] = useState('');
+  const fileRef = useRef(null);
+
+  const handleFile = async (file) => {
+    if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
+      setError('Please upload a PDF file');
+      return;
+    }
+    setError(null);
+    setParsing(true);
+
+    try {
+      setProgress('Loading PDF library...');
+      await loadPdfJs();
+
+      setProgress('Reading PDF...');
+      const arrayBuffer = await file.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuffer);
+
+      // Store base64 for session save
+      // Chunked base64 conversion to avoid call stack overflow
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < uint8.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(null, uint8.subarray(i, i + chunkSize));
+      }
+      const base64 = btoa(binary);
+
+      setProgress('Extracting text with positions...');
+      const spans = await extractPdfSpans(uint8);
+
+      setProgress(`Found ${spans.length} text elements. Analyzing structure...`);
+      const state = parsePdfToState(spans);
+
+      // Attach PDF data
+      state.sourcePdfBase64 = base64;
+      state.sourcePdfName = file.name;
+
+      setProgress('Done!');
+      setTimeout(() => onParsed(state), 300);
+    } catch (err) {
+      console.error('PDF parse error:', err);
+      setError(`Failed to parse PDF: ${err.message}`);
+      setParsing(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    handleFile(file);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+      <div className="bg-gray-900 rounded-2xl border border-gray-700 max-w-lg w-full p-6 relative">
+        <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-white">
+          <X size={20} />
+        </button>
+
+        <div className="text-center mb-6">
+          <Music size={32} className="text-amber-400 mx-auto mb-3" />
+          <h2 className="text-xl font-bold text-white" style={{ fontFamily: uiFont }}>Import Multitracks PDF</h2>
+          <p className="text-sm text-gray-400 mt-1" style={{ fontFamily: uiFont }}>
+            Upload a chord chart PDF from Multitracks.com
+          </p>
+        </div>
+
+        {!parsing ? (
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => fileRef.current?.click()}
+            className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all ${
+              dragging
+                ? 'border-amber-400 bg-amber-500/10'
+                : 'border-gray-600 hover:border-gray-400 hover:bg-gray-800/50'
+            }`}
+          >
+            <UploadCloud size={40} className={`mx-auto mb-3 ${dragging ? 'text-amber-400' : 'text-gray-500'}`} />
+            <p className="text-gray-300 text-sm font-medium">
+              {dragging ? 'Drop your PDF here' : 'Drag & drop a PDF here, or click to browse'}
+            </p>
+            <p className="text-gray-600 text-xs mt-2">Supports Multitracks.com chord chart PDFs</p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".pdf"
+              onChange={(e) => handleFile(e.target.files?.[0])}
+              className="hidden"
+            />
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <Loader2 size={32} className="text-amber-400 mx-auto mb-4 animate-spin" />
+            <p className="text-gray-300 text-sm">{progress}</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-4 flex items-center gap-2 text-red-400 text-sm bg-red-500/10 rounded-lg px-4 py-3">
+            <AlertCircle size={16} />
+            {error}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ─── CHORD LYRIC LINE ───────────────────────────────────────────────────────
+function ChordLyricLine({ line, onChange, onRemove, transposeSemitones, useFlats, isOnly }) {
+  const [selectedChord, setSelectedChord] = useState(null);
+  const [addingAt, setAddingAt] = useState(null);
+  const [newChord, setNewChord] = useState('');
+  const [editingChord, setEditingChord] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [dragging, setDragging] = useState(null);
+  const [isEditingLyrics, setIsEditingLyrics] = useState(false);
+  const lyricInputRef = useRef(null);
+  const chordRowRef = useRef(null);
+  const charW = useRef(9.6);
+  const measureRef = useRef(null);
+
+  useEffect(() => {
+    if (measureRef.current) {
+      const w = measureRef.current.getBoundingClientRect().width / 20;
+      if (w > 0) charW.current = w;
+    }
+  }, []);
+
+  // Click the CHORD ROW (above lyrics) to add a new chord
+  const handleChordRowClick = (e) => {
+    if (addingAt !== null || editingChord || dragging) return;
+    const rect = chordRowRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const ci = Math.max(0, Math.floor(x / charW.current));
+    // Check if near an existing chord
+    const existing = line.chords.find(c => Math.abs(c.charIndex - ci) <= 1);
+    if (existing) {
+      setSelectedChord(existing.id);
+    } else {
+      setAddingAt(ci);
+      setNewChord('');
+    }
+  };
+
+  const commitNewChord = () => {
+    if (newChord.trim() && addingAt !== null) {
+      const chord = { id: uid(), name: newChord.trim(), charIndex: addingAt, isLocked: false, manualOffset: 0 };
+      onChange({ ...line, chords: [...line.chords, chord].sort((a, b) => a.charIndex - b.charIndex) });
+    }
+    setAddingAt(null);
+    setNewChord('');
+  };
+
+  const commitEdit = () => {
+    if (editText.trim() && editingChord) {
+      onChange({
+        ...line,
+        chords: line.chords.map(c => c.id === editingChord ? { ...c, name: editText.trim() } : c)
+      });
+    }
+    setEditingChord(null);
+    setEditText('');
+  };
+
+  const removeChord = (id) => {
+    onChange({ ...line, chords: line.chords.filter(c => c.id !== id) });
+    setSelectedChord(null);
+  };
+
+  const toggleLock = (id) => {
+    onChange({ ...line, chords: line.chords.map(c => c.id === id ? { ...c, isLocked: !c.isLocked } : c) });
+  };
+
+  const nudgeChord = useCallback((id, dir) => {
+    // Only nudge if chord is unlocked
+    const chord = line.chords.find(c => c.id === id);
+    if (chord?.isLocked) return;
+    onChange({
+      ...line,
+      chords: line.chords.map(c =>
+        c.id === id ? { ...c, charIndex: Math.max(0, c.charIndex + dir) } : c
+      ).sort((a, b) => a.charIndex - b.charIndex)
+    });
+  }, [line, onChange]);
+
+  // Keyboard handler for selected chord
+  useEffect(() => {
+    if (!selectedChord) return;
+    const handler = (e) => {
+      // Don't capture keys if user is editing lyrics
+      if (isEditingLyrics) return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeChord(selectedChord, -1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); nudgeChord(selectedChord, 1); }
+      if (e.key === 'Delete') { e.preventDefault(); removeChord(selectedChord); }
+      if (e.key === 'Escape') setSelectedChord(null);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedChord, nudgeChord, isEditingLyrics]);
+
+  // Drag support for unlocked chords
+  const handleDragStart = (e, chordId) => {
+    const chord = line.chords.find(c => c.id === chordId);
+    if (chord?.isLocked) return;
+    e.preventDefault();
+    setDragging(chordId);
+    setSelectedChord(chordId);
+
+    const moveHandler = (me) => {
+      if (!chordRowRef.current) return;
+      const rect = chordRowRef.current.getBoundingClientRect();
+      const x = me.clientX - rect.left;
+      const ci = Math.max(0, Math.floor(x / charW.current));
+      onChange({
+        ...line,
+        chords: line.chords.map(c =>
+          c.id === chordId ? { ...c, charIndex: ci } : c
+        ).sort((a, b) => a.charIndex - b.charIndex)
+      });
+    };
+
+    const upHandler = () => {
+      setDragging(null);
+      window.removeEventListener('mousemove', moveHandler);
+      window.removeEventListener('mouseup', upHandler);
+    };
+
+    window.addEventListener('mousemove', moveHandler);
+    window.addEventListener('mouseup', upHandler);
+  };
+
+  const cw = charW.current;
+
+  return (
+    <div className="relative group mb-2" onClick={() => { setSelectedChord(null); }}>
+      {/* Hidden measure element */}
+      <span ref={measureRef} style={{ fontFamily: font, fontSize: '14px', position: 'absolute', opacity: 0, whiteSpace: 'pre', pointerEvents: 'none' }}>
+        XXXXXXXXXXXXXXXXXXXX
+      </span>
+
+      {/* Chord row — click here to ADD chords */}
+      <div
+        ref={chordRowRef}
+        className="relative cursor-crosshair border-b border-dashed border-transparent hover:border-gray-700/50 transition-colors"
+        style={{ height: '28px', minWidth: '100%' }}
+        onClick={handleChordRowClick}
+        title="Click to add a chord"
+      >
+        {line.chords.map(c => {
+          const display = transposeChord(c.name, transposeSemitones, useFlats);
+          const left = c.charIndex * cw;
+          const isSelected = selectedChord === c.id;
+          const isEditing = editingChord === c.id;
+          const isDraggingThis = dragging === c.id;
+          return (
+            <div
+              key={c.id}
+              className={`absolute flex items-center gap-0.5 ${!c.isLocked ? 'cursor-grab' : 'cursor-pointer'} ${isDraggingThis ? 'cursor-grabbing' : ''}`}
+              style={{ left: `${left}px`, top: '2px', zIndex: isSelected ? 10 : 1 }}
+              onClick={(e) => { e.stopPropagation(); setSelectedChord(c.id); }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                setEditingChord(c.id);
+                setEditText(c.name);
+                setSelectedChord(null);
+              }}
+              onMouseDown={(e) => { if (!c.isLocked && e.button === 0) handleDragStart(e, c.id); }}
+            >
+              {isEditing ? (
+                <input
+                  autoFocus
+                  value={editText}
+                  onChange={e => setEditText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') { setEditingChord(null); } }}
+                  onBlur={commitEdit}
+                  className="bg-amber-900/80 text-amber-200 border border-amber-500 rounded px-1 outline-none"
+                  style={{ fontFamily: font, fontSize: '13px', width: `${Math.max(3, editText.length + 1) * 9}px` }}
+                  onClick={e => e.stopPropagation()}
+                />
+              ) : (
+                <>
+                  <span
+                    className={`font-bold select-none transition-colors ${isSelected ? 'text-amber-300' : c.isLocked ? 'text-sky-300' : 'text-emerald-300'}`}
+                    style={{ fontFamily: font, fontSize: '14px', lineHeight: 1, whiteSpace: 'nowrap' }}
+                  >
+                    {display}
+                  </span>
+                  {isSelected && (
+                    <span className="flex items-center gap-0.5 ml-1" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => toggleLock(c.id)}
+                        className={`hover:text-white p-0.5 rounded ${c.isLocked ? 'text-sky-400' : 'text-emerald-400'}`}
+                        title={c.isLocked ? 'Locked — click to unlock for dragging' : 'Unlocked — drag to reposition, click to lock'}>
+                        {c.isLocked ? <Lock size={11} /> : <Unlock size={11} />}
+                      </button>
+                      <button onClick={() => removeChord(c.id)}
+                        className="text-gray-400 hover:text-red-400 p-0.5" title="Delete chord">
+                        <X size={11} />
+                      </button>
+                    </span>
+                  )}
+                </>
+              )}
+              {/* Anchor line indicator */}
+              <div className={`absolute top-full left-0 w-px ${isSelected ? 'h-2 bg-amber-400' : 'h-1.5 bg-sky-500/30'}`} />
+            </div>
+          );
+        })}
+
+        {/* New chord input */}
+        {addingAt !== null && (
+          <div className="absolute" style={{ left: `${addingAt * cw}px`, top: '2px' }} onClick={e => e.stopPropagation()}>
+            <input
+              autoFocus
+              value={newChord}
+              placeholder="e.g. Em7"
+              onChange={e => setNewChord(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitNewChord(); if (e.key === 'Escape') { setAddingAt(null); } }}
+              onBlur={commitNewChord}
+              className="bg-emerald-900/80 text-emerald-200 border border-emerald-500 rounded px-1 outline-none placeholder-emerald-600"
+              style={{ fontFamily: font, fontSize: '13px', width: '80px' }}
+            />
+          </div>
+        )}
+
+        {/* Empty hint */}
+        {line.chords.length === 0 && addingAt === null && (
+          <div className="absolute inset-0 flex items-center text-gray-700 text-xs pointer-events-none pl-1" style={{ fontFamily: uiFont }}>
+            Click here to place chords
+          </div>
+        )}
+      </div>
+
+      {/* Lyric row — click here to EDIT LYRICS (separate from chord placement) */}
+      <div className="flex items-start gap-1">
+        <input
+          ref={lyricInputRef}
+          value={line.lyrics}
+          onChange={e => onChange({ ...line, lyrics: e.target.value })}
+          onFocus={() => { setIsEditingLyrics(true); setSelectedChord(null); }}
+          onBlur={() => setIsEditingLyrics(false)}
+          placeholder="Type lyrics here..."
+          className={`flex-1 bg-transparent outline-none placeholder-gray-600 rounded px-1 py-0.5 transition-colors ${isEditingLyrics ? 'bg-white/10 ring-1 ring-amber-500/30' : 'hover:bg-white/5'}`}
+          style={{ fontFamily: font, fontSize: '14px', lineHeight: '20px', color: '#e2e8f0' }}
+          onClick={e => e.stopPropagation()}
+        />
+        {!isOnly && (
+          <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="opacity-0 group-hover:opacity-100 text-gray-600 hover:text-red-400 transition-all p-0.5 shrink-0 mt-0.5">
+            <Trash2 size={12} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── SECTION EDITOR ──────────────────────────────────────────────────────────
+function SectionEditor({ section, onChange, onRemove, onMoveUp, onMoveDown, isFirst, isLast, transposeSemitones, useFlats }) {
+  const typeInfo = SECTION_TYPES.find(t => t.value === section.type) || SECTION_TYPES[1];
+  const label = section.instanceNumber > 0 ? `${typeInfo.label} ${section.instanceNumber}` : typeInfo.label;
+
+  const addLine = () => onChange({ ...section, lines: [...section.lines, makeLine()] });
+  const updateLine = (idx, newLine) => { const l = [...section.lines]; l[idx] = newLine; onChange({ ...section, lines: l }); };
+  const removeLine = (idx) => { if (section.lines.length <= 1) return; onChange({ ...section, lines: section.lines.filter((_, i) => i !== idx) }); };
+
+  return (
+    <div className="rounded-lg overflow-hidden border border-gray-700/50 bg-gray-900/50">
+      <div className="flex items-center gap-2 px-3 py-2 bg-gray-800/80 border-b border-gray-700/50">
+        <GripVertical size={14} className="text-gray-600" />
+        <select
+          value={section.type}
+          onChange={e => onChange({ ...section, type: e.target.value })}
+          className="bg-gray-700 text-white text-sm rounded px-2 py-1 border border-gray-600 outline-none"
+          style={{ fontFamily: uiFont }}
+        >
+          {SECTION_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+        <input
+          type="number" min="0" max="20"
+          value={section.instanceNumber}
+          onChange={e => onChange({ ...section, instanceNumber: parseInt(e.target.value) || 0 })}
+          className="bg-gray-700 text-white text-sm rounded px-2 py-1 w-14 border border-gray-600 outline-none"
+          title="Instance # (0 = no number)"
+        />
+        <span className="text-amber-400 font-semibold text-sm flex-1" style={{ fontFamily: uiFont }}>{label}</span>
+        <div className="flex items-center gap-1">
+          <button onClick={onMoveUp} disabled={isFirst} className="text-gray-500 hover:text-white disabled:opacity-20 p-1"><ChevronUp size={14} /></button>
+          <button onClick={onMoveDown} disabled={isLast} className="text-gray-500 hover:text-white disabled:opacity-20 p-1"><ChevronDown size={14} /></button>
+          <button onClick={onRemove} className="text-gray-500 hover:text-red-400 p-1"><Trash2 size={14} /></button>
+        </div>
+      </div>
+      <div className="flex">
+        <div className="w-48 border-r border-gray-700/50 bg-gray-800/40 p-2 shrink-0">
+          <textarea
+            value={section.productionNotes}
+            onChange={e => onChange({ ...section, productionNotes: e.target.value })}
+            placeholder="Production notes..."
+            className="w-full bg-transparent text-gray-400 text-xs resize-none outline-none placeholder-gray-700 min-h-[60px]"
+            style={{ fontFamily: uiFont }}
+            rows={3}
+          />
+        </div>
+        <div className="flex-1 p-3 overflow-x-auto">
+          {section.lines.map((line, i) => (
+            <ChordLyricLine
+              key={line.id}
+              line={line}
+              onChange={l => updateLine(i, l)}
+              onRemove={() => removeLine(i)}
+              transposeSemitones={transposeSemitones}
+              useFlats={useFlats}
+              isOnly={section.lines.length === 1}
+            />
+          ))}
+          <button onClick={addLine} className="text-gray-600 hover:text-emerald-400 text-xs flex items-center gap-1 mt-1 transition-colors" style={{ fontFamily: uiFont }}>
+            <Plus size={12} /> Add line
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PRINT PREVIEW ───────────────────────────────────────────────────────────
+function PrintPreview({ state }) {
+  const { metadata, sections, songForm, footerTags, transposeSemitones, useFlats } = state;
+  const displayKey = getDisplayKey(metadata.key, transposeSemitones, useFlats);
+
+  return (
+    <div id="print-area" className="bg-white text-black p-8 min-h-[11in]" style={{ fontFamily: font, width: '8.5in', margin: '0 auto' }}>
+      <div className="flex justify-between items-start mb-1 pb-2 border-b-2 border-gray-300">
+        <div>
+          <div className="text-2xl font-bold" style={{ fontFamily: uiFont }}>{metadata.title || 'Untitled'}</div>
+          <div className="text-sm text-gray-500" style={{ fontFamily: uiFont }}>{metadata.artist}</div>
+          {metadata.arrangementName && (
+            <div className="text-xs text-gray-400 italic" style={{ fontFamily: uiFont }}>{metadata.arrangementName}</div>
+          )}
+        </div>
+        <div className="text-right text-sm" style={{ fontFamily: uiFont }}>
+          <span className="font-bold">Key:</span> {displayKey} &nbsp; <span className="font-bold">Tempo:</span> {metadata.tempo} &nbsp; <span className="font-bold">Time:</span> {metadata.time}
+        </div>
+      </div>
+
+      {songForm && (
+        <div className="text-xs text-gray-500 mb-4 text-center" style={{ fontFamily: uiFont }}>
+          <span className="font-bold">Song Form:</span> {songForm}
+        </div>
+      )}
+
+      {sections.map((section) => {
+        const typeInfo = SECTION_TYPES.find(t => t.value === section.type) || SECTION_TYPES[1];
+        const label = section.instanceNumber > 0 ? `${typeInfo.label} ${section.instanceNumber}` : typeInfo.label;
+        return (
+          <div key={section.id} className="mb-3">
+            <table className="w-full border-collapse" style={{ tableLayout: 'fixed' }}>
+              <tbody>
+                <tr>
+                  <td className="bg-gray-900 text-white text-xs font-bold px-2 py-1 align-top" style={{ width: '120px', fontFamily: uiFont }}>
+                    <span className="text-gray-400">{typeInfo.code}{section.instanceNumber > 0 ? section.instanceNumber : ''}</span>
+                  </td>
+                  <td className="bg-gray-800 text-white font-bold px-3 py-1 text-sm" style={{ fontFamily: uiFont }}>
+                    {label.toUpperCase()}
+                  </td>
+                </tr>
+                <tr>
+                  <td className="bg-gray-100 text-gray-500 text-xs px-2 py-2 align-top border border-gray-200" style={{ fontFamily: uiFont }}>
+                    {section.productionNotes && <div className="italic whitespace-pre-wrap">{section.productionNotes}</div>}
+                  </td>
+                  <td className="px-3 py-2 align-top border border-gray-200">
+                    {section.lines.map(line => {
+                      const cw = 7.2;
+                      return (
+                        <div key={line.id} className="mb-0.5">
+                          {line.chords.length > 0 && (
+                            <div className="relative" style={{ height: '16px', fontSize: '12px', fontWeight: 'bold', color: '#1a1a1a' }}>
+                              {line.chords.map(c => (
+                                <span key={c.id} className="absolute" style={{ left: `${c.charIndex * cw}px`, whiteSpace: 'nowrap' }}>
+                                  {transposeChord(c.name, transposeSemitones, useFlats)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {line.lyrics && (
+                            <div style={{ fontSize: '12px', color: '#333', whiteSpace: 'pre' }}>{line.lyrics}</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+
+      {footerTags.length > 0 && (
+        <div className="mt-6 pt-2 border-t border-gray-300 text-center text-xs text-gray-400" style={{ fontFamily: uiFont }}>
+          {footerTags.join(' · ')}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PARSE RESULTS SUMMARY ──────────────────────────────────────────────────
+function ParseSummary({ state, onAccept, onCancel }) {
+  const { metadata, sections, songForm } = state;
+  const totalChords = sections.reduce((sum, s) => sum + s.lines.reduce((ls, l) => ls + l.chords.length, 0), 0);
+  const totalLines = sections.reduce((sum, s) => sum + s.lines.length, 0);
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+      <div className="bg-gray-900 rounded-2xl border border-gray-700 max-w-lg w-full p-6" style={{ fontFamily: uiFont }}>
+        <div className="flex items-center gap-3 mb-4">
+          <CheckCircle2 size={28} className="text-emerald-400" />
+          <h2 className="text-xl font-bold text-white">PDF Parsed Successfully</h2>
+        </div>
+
+        <div className="bg-gray-800 rounded-lg p-4 space-y-2 text-sm mb-4">
+          <div className="flex justify-between"><span className="text-gray-400">Title</span><span className="text-white font-medium">{metadata.title || '—'}</span></div>
+          <div className="flex justify-between"><span className="text-gray-400">Artist</span><span className="text-white">{metadata.artist || '—'}</span></div>
+          <div className="flex justify-between"><span className="text-gray-400">Key</span><span className="text-white">{metadata.key}</span></div>
+          <div className="flex justify-between"><span className="text-gray-400">Tempo</span><span className="text-white">{metadata.tempo || '—'}</span></div>
+          <div className="flex justify-between"><span className="text-gray-400">Time</span><span className="text-white">{metadata.time}</span></div>
+          <div className="border-t border-gray-700 pt-2 flex justify-between"><span className="text-gray-400">Sections</span><span className="text-amber-300 font-medium">{sections.length}</span></div>
+          <div className="flex justify-between"><span className="text-gray-400">Lines</span><span className="text-amber-300">{totalLines}</span></div>
+          <div className="flex justify-between"><span className="text-gray-400">Chords placed</span><span className="text-amber-300">{totalChords}</span></div>
+          {songForm && (
+            <div className="border-t border-gray-700 pt-2">
+              <span className="text-gray-400 block mb-1">Song Form</span>
+              <span className="text-white font-mono text-xs">{songForm}</span>
+            </div>
+          )}
+        </div>
+
+        <p className="text-xs text-gray-500 mb-4">
+          This will replace your current editor content. You can adjust chord positions, edit lyrics, and refine everything in the editor.
+        </p>
+
+        <div className="flex gap-3">
+          <button onClick={onCancel} className="flex-1 py-2 rounded-lg border border-gray-600 text-gray-300 hover:bg-gray-800 transition-colors text-sm">
+            Cancel
+          </button>
+          <button onClick={onAccept} className="flex-1 py-2 rounded-lg bg-amber-500 text-gray-900 font-semibold hover:bg-amber-400 transition-colors text-sm">
+            Load into Editor
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── UNDO/REDO HOOK ──────────────────────────────────────────────────────────
+function useHistory(initialState, maxHistory = 50) {
+  const [states, setStates] = useState([initialState]);
+  const [index, setIndex] = useState(0);
+  const skipRecord = useRef(false);
+
+  const current = states[index];
+
+  const push = useCallback((newState) => {
+    if (skipRecord.current) {
+      skipRecord.current = false;
+      setStates(prev => {
+        const copy = [...prev];
+        copy[index] = newState;
+        return copy;
+      });
+      return;
+    }
+    setStates(prev => {
+      // Trim any future states
+      const trimmed = prev.slice(0, index + 1);
+      const next = [...trimmed, newState];
+      // Cap history
+      if (next.length > maxHistory) next.shift();
+      return next;
+    });
+    setIndex(prev => Math.min(prev + 1, maxHistory - 1));
+  }, [index, maxHistory]);
+
+  const undo = useCallback(() => {
+    setIndex(prev => Math.max(0, prev - 1));
+  }, []);
+
+  const redo = useCallback(() => {
+    setIndex(prev => Math.min(states.length - 1, prev + 1));
+  }, [states.length]);
+
+  const canUndo = index > 0;
+  const canRedo = index < states.length - 1;
+
+  // Replace entire history (for loading sessions)
+  const reset = useCallback((newState) => {
+    setStates([newState]);
+    setIndex(0);
+  }, []);
+
+  return { current, push, undo, redo, canUndo, canRedo, reset };
+}
+
+// ─── MAIN APP ────────────────────────────────────────────────────────────────
+function ChordChartFormatter() {
+  const { current: state, push: pushState, undo, redo, canUndo, canRedo, reset: resetHistory } = useHistory(makeInitialState());
+  const [view, setView] = useState('edit');
+  const [showUpload, setShowUpload] = useState(false);
+  const [parsedPreview, setParsedPreview] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const { metadata, sections, songForm, footerTags, transposeSemitones, useFlats } = state;
+
+  // Update helpers that push to history
+  const update = (patch) => pushState({ ...state, ...patch });
+  const updateMeta = (patch) => pushState({ ...state, metadata: { ...state.metadata, ...patch } });
+
+  const addSection = () => update({ sections: [...sections, makeSection('VERSE', 1)] });
+  const updateSection = (idx, sec) => { const s = [...sections]; s[idx] = sec; update({ sections: s }); };
+  const removeSection = (idx) => { if (sections.length <= 1) return; update({ sections: sections.filter((_, i) => i !== idx) }); };
+  const moveSection = (idx, dir) => { const s = [...sections]; const ni = idx + dir; if (ni < 0 || ni >= s.length) return; [s[idx], s[ni]] = [s[ni], s[idx]]; update({ sections: s }); };
+
+  const transposeUp = () => update({ transposeSemitones: (transposeSemitones + 1) % 12 });
+  const transposeDown = () => update({ transposeSemitones: ((transposeSemitones - 1) + 12) % 12 });
+  const toggleFlats = () => update({ useFlats: !useFlats });
+
+  const toggleTag = (tag) => update({ footerTags: footerTags.includes(tag) ? footerTags.filter(t => t !== tag) : [...footerTags, tag] });
+
+  const autoSongForm = () => {
+    const form = sections.map(s => {
+      const t = SECTION_TYPES.find(st => st.value === s.type);
+      return (t ? t.code : '?') + (s.instanceNumber > 0 ? s.instanceNumber : '');
+    }).join('  ');
+    update({ songForm: form });
+  };
+
+  const saveSession = () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(metadata.title || 'untitled').replace(/[^a-zA-Z0-9]/g, '_')}_session.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const loadSession = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => { try { resetHistory(JSON.parse(ev.target.result)); } catch { alert('Invalid session file'); } };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handlePrint = () => { setView('preview'); setTimeout(() => window.print(), 400); };
+
+  const unlockAll = () => {
+    update({
+      sections: sections.map(s => ({
+        ...s, lines: s.lines.map(l => ({ ...l, chords: l.chords.map(c => ({ ...c, isLocked: false })) }))
+      }))
+    });
+  };
+
+  const lockAll = () => {
+    update({
+      sections: sections.map(s => ({
+        ...s, lines: s.lines.map(l => ({ ...l, chords: l.chords.map(c => ({ ...c, isLocked: true })) }))
+      }))
+    });
+  };
+
+  const handlePdfParsed = (parsedState) => {
+    setShowUpload(false);
+    setParsedPreview(parsedState);
+  };
+
+  const acceptParsed = () => {
+    if (parsedPreview) {
+      resetHistory({
+        ...parsedPreview,
+        sourcePdfBase64: parsedPreview.sourcePdfBase64 || null,
+        sourcePdfName: parsedPreview.sourcePdfName || null,
+      });
+      setParsedPreview(null);
+    }
+  };
+
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handler = (e) => {
+      // Don't capture if user is typing in an input/textarea
+      const tag = e.target.tagName;
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        if (!isInput) { e.preventDefault(); undo(); }
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey) {
+        e.preventDefault(); redo();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
+        e.preventDefault(); redo();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [undo, redo]);
+
+  const displayKey = getDisplayKey(metadata.key, transposeSemitones, useFlats);
+  const semiLabel = transposeSemitones > 0 ? `+${transposeSemitones}` : transposeSemitones < 0 ? `${transposeSemitones}` : '0';
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+        @media print {
+          body * { visibility: hidden !important; }
+          #print-area, #print-area * { visibility: visible !important; }
+          #print-area { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; margin: 0 !important; padding: 0.5in !important; }
+        }
+        * { scrollbar-width: thin; scrollbar-color: #374151 transparent; }
+      `}</style>
+
+      {showUpload && <PdfUploadZone onParsed={handlePdfParsed} onClose={() => setShowUpload(false)} />}
+      {parsedPreview && <ParseSummary state={parsedPreview} onAccept={acceptParsed} onCancel={() => setParsedPreview(null)} />}
+
+      <div className="min-h-screen bg-gray-950 text-white" style={{ fontFamily: uiFont }}>
+        {/* Toolbar */}
+        <div className="sticky top-0 z-50 bg-gray-900/95 backdrop-blur border-b border-gray-800 px-4 py-2">
+          <div className="max-w-6xl mx-auto flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 mr-3">
+              <Music size={20} className="text-amber-400" />
+              <span className="font-bold text-sm tracking-wide text-amber-400">CHART FORMATTER</span>
+            </div>
+
+            {/* Import PDF button */}
+            <button
+              onClick={() => setShowUpload(true)}
+              className="text-xs bg-emerald-600 text-white font-semibold flex items-center gap-1.5 px-3 py-1.5 rounded hover:bg-emerald-500 transition-colors"
+            >
+              <UploadCloud size={13} /> Import PDF
+            </button>
+
+            <div className="w-px h-6 bg-gray-700 mx-1" />
+
+            {/* View toggle */}
+            <div className="flex rounded-lg overflow-hidden border border-gray-700">
+              <button onClick={() => setView('edit')} className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${view === 'edit' ? 'bg-amber-500/20 text-amber-300' : 'text-gray-400 hover:text-white'}`}>
+                <Edit3 size={12} /> Edit
+              </button>
+              <button onClick={() => setView('preview')} className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${view === 'preview' ? 'bg-amber-500/20 text-amber-300' : 'text-gray-400 hover:text-white'}`}>
+                <Eye size={12} /> Preview
+              </button>
+            </div>
+
+            {/* Transpose */}
+            <div className="flex items-center gap-1 ml-1 border border-gray-700 rounded-lg px-2 py-1">
+              <span className="text-xs text-gray-400 mr-1">Transpose:</span>
+              <button onClick={transposeDown} className="text-gray-400 hover:text-white p-0.5"><ChevronDown size={14} /></button>
+              <span className="text-xs font-mono w-8 text-center text-amber-300">{semiLabel}</span>
+              <button onClick={transposeUp} className="text-gray-400 hover:text-white p-0.5"><ChevronUp size={14} /></button>
+              <button onClick={toggleFlats} className="text-xs ml-1 px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 hover:text-white">
+                {useFlats ? '♭' : '♯'}
+              </button>
+              {transposeSemitones !== 0 && <span className="text-xs text-gray-500 ml-1">{metadata.key} → {displayKey}</span>}
+            </div>
+
+            <div className="flex-1" />
+
+            {/* Undo/Redo */}
+            <div className="flex items-center border border-gray-700 rounded-lg overflow-hidden mr-1">
+              <button onClick={undo} disabled={!canUndo} className="text-xs text-gray-400 hover:text-white disabled:opacity-20 flex items-center gap-1 px-2 py-1.5 hover:bg-gray-800 transition-colors" title="Undo (Ctrl+Z)">
+                <Undo2 size={13} />
+              </button>
+              <div className="w-px h-4 bg-gray-700" />
+              <button onClick={redo} disabled={!canRedo} className="text-xs text-gray-400 hover:text-white disabled:opacity-20 flex items-center gap-1 px-2 py-1.5 hover:bg-gray-800 transition-colors" title="Redo (Ctrl+Shift+Z)">
+                <Redo2 size={13} />
+              </button>
+            </div>
+
+            <button onClick={unlockAll} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800"><Unlock size={12} /> Unlock All</button>
+            <button onClick={lockAll} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800"><Lock size={12} /> Lock All</button>
+            <button onClick={saveSession} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800"><Save size={12} /> Save</button>
+            <button onClick={() => fileInputRef.current?.click()} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800"><Upload size={12} /> Load</button>
+            <button onClick={handlePrint} className="text-xs bg-amber-500 text-gray-900 font-semibold flex items-center gap-1 px-3 py-1.5 rounded hover:bg-amber-400 transition-colors"><FileDown size={12} /> Export PDF</button>
+            <input ref={fileInputRef} type="file" accept=".json" onChange={loadSession} className="hidden" />
+          </div>
+        </div>
+
+        {/* Source PDF indicator */}
+        {state.sourcePdfName && (
+          <div className="max-w-6xl mx-auto px-4 pt-2">
+            <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-900/50 rounded px-3 py-1.5 border border-gray-800">
+              <CheckCircle2 size={12} className="text-emerald-500" />
+              Imported from: <span className="text-gray-300">{state.sourcePdfName}</span>
+              <span className="text-gray-600">• PDF embedded in session file</span>
+            </div>
+          </div>
+        )}
+
+        {/* Main content */}
+        <div className="max-w-6xl mx-auto p-4">
+          {view === 'edit' ? (
+            <div className="space-y-4">
+              {/* Metadata */}
+              <div className="bg-gray-900 rounded-lg border border-gray-800 p-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="col-span-2">
+                    <label className="text-xs text-gray-500 block mb-1">Song Title</label>
+                    <input value={metadata.title} onChange={e => updateMeta({ title: e.target.value })} placeholder="Song title" className="w-full bg-gray-800 text-white rounded px-3 py-2 border border-gray-700 outline-none focus:border-amber-500 text-sm" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs text-gray-500 block mb-1">Artist</label>
+                    <input value={metadata.artist} onChange={e => updateMeta({ artist: e.target.value })} placeholder="Artist name" className="w-full bg-gray-800 text-white rounded px-3 py-2 border border-gray-700 outline-none focus:border-amber-500 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Key</label>
+                    <select value={metadata.key} onChange={e => updateMeta({ key: e.target.value })} className="w-full bg-gray-800 text-white rounded px-3 py-2 border border-gray-700 outline-none focus:border-amber-500 text-sm">
+                      {ALL_KEYS.map(k => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Tempo (BPM)</label>
+                    <input value={metadata.tempo} onChange={e => updateMeta({ tempo: e.target.value })} placeholder="120" className="w-full bg-gray-800 text-white rounded px-3 py-2 border border-gray-700 outline-none focus:border-amber-500 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Time Signature</label>
+                    <select value={metadata.time} onChange={e => updateMeta({ time: e.target.value })} className="w-full bg-gray-800 text-white rounded px-3 py-2 border border-gray-700 outline-none focus:border-amber-500 text-sm">
+                      {TIME_SIGS.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Arrangement</label>
+                    <input value={metadata.arrangementName} onChange={e => updateMeta({ arrangementName: e.target.value })} placeholder="Sunday AM" className="w-full bg-gray-800 text-white rounded px-3 py-2 border border-gray-700 outline-none focus:border-amber-500 text-sm" />
+                  </div>
+                </div>
+                <div className="mt-3 flex items-end gap-2">
+                  <div className="flex-1">
+                    <label className="text-xs text-gray-500 block mb-1">Song Form</label>
+                    <input value={songForm} onChange={e => update({ songForm: e.target.value })} placeholder="I  V1  Pc  C  V2  Pc  C  Br  C  O" className="w-full bg-gray-800 text-white rounded px-3 py-2 border border-gray-700 outline-none focus:border-amber-500 text-sm font-mono" />
+                  </div>
+                  <button onClick={autoSongForm} className="px-3 py-2 text-xs bg-gray-700 text-gray-300 hover:text-white rounded transition-colors whitespace-nowrap">Auto-generate</button>
+                </div>
+                <div className="mt-3">
+                  <label className="text-xs text-gray-500 block mb-1">Tags</label>
+                  <div className="flex flex-wrap gap-2">
+                    {FOOTER_TAGS.map(tag => (
+                      <button key={tag} onClick={() => toggleTag(tag)} className={`px-2.5 py-1 rounded-full text-xs transition-colors ${footerTags.includes(tag) ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-gray-800 text-gray-500 border border-gray-700 hover:border-gray-500'}`}>
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Sections */}
+              <div className="space-y-3">
+                {sections.map((section, idx) => (
+                  <SectionEditor
+                    key={section.id} section={section}
+                    onChange={s => updateSection(idx, s)}
+                    onRemove={() => removeSection(idx)}
+                    onMoveUp={() => moveSection(idx, -1)}
+                    onMoveDown={() => moveSection(idx, 1)}
+                    isFirst={idx === 0} isLast={idx === sections.length - 1}
+                    transposeSemitones={transposeSemitones} useFlats={useFlats}
+                  />
+                ))}
+              </div>
+              <button onClick={addSection} className="w-full py-3 border-2 border-dashed border-gray-700 rounded-lg text-gray-500 hover:text-amber-400 hover:border-amber-500/50 flex items-center justify-center gap-2 transition-colors">
+                <Plus size={16} /> Add Section
+              </button>
+            </div>
+          ) : (
+            <div className="flex justify-center"><div className="shadow-2xl"><PrintPreview state={state} /></div></div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+
+    // ─── RENDER ──────────────────────────────────────────────────────────────
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(ChordChartFormatter));
+  </script>
+</body>
+</html>
