@@ -84,28 +84,14 @@ create policy songs_read_own
     on public.songs for select
     using (owner_id = auth.uid());
 
-create policy songs_read_shared
-    on public.songs for select
-    using (exists (
-        select 1 from public.song_shares s
-        where s.song_id = songs.id and s.user_id = auth.uid()
-    ));
-
 create policy songs_write_own
     on public.songs for all
     using (owner_id = auth.uid())
     with check (owner_id = auth.uid());
 
-create policy songs_write_shared_editor
-    on public.songs for update
-    using (exists (
-        select 1 from public.song_shares s
-        where s.song_id = songs.id
-          and s.user_id = auth.uid()
-          and s.can_edit = true
-    ));
-
 -- ---------- song_shares -----------------------------------------------------
+-- Created before the cross-referencing songs policies below, since those
+-- policies query song_shares.
 
 create table public.song_shares (
     song_id   uuid not null references public.songs(id) on delete cascade,
@@ -116,6 +102,23 @@ create table public.song_shares (
 );
 
 alter table public.song_shares enable row level security;
+
+-- Songs policies that need song_shares to exist.
+create policy songs_read_shared
+    on public.songs for select
+    using (exists (
+        select 1 from public.song_shares s
+        where s.song_id = songs.id and s.user_id = auth.uid()
+    ));
+
+create policy songs_write_shared_editor
+    on public.songs for update
+    using (exists (
+        select 1 from public.song_shares s
+        where s.song_id = songs.id
+          and s.user_id = auth.uid()
+          and s.can_edit = true
+    ));
 
 create policy song_shares_owner_manages
     on public.song_shares for all
