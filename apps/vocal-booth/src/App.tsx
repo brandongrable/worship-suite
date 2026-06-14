@@ -2,11 +2,16 @@ import { useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './lib/supabase';
 import SignIn from './SignIn';
+import Home from './Home';
+import Library from './Library';
 import WorshipMixer from './WorshipMixer.jsx';
+
+type View = 'home' | 'mixer' | 'library';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
+  const [view, setView] = useState<View>('home');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -15,6 +20,7 @@ export default function App() {
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
       setSession(sess);
+      if (!sess) setView('home');
     });
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -39,15 +45,32 @@ export default function App() {
 
   if (!session) return <SignIn />;
 
+  const email = session.user.email ?? '?';
+
+  if (view === 'mixer') {
+    return (
+      <>
+        <WorshipMixer />
+        <FloatingBackBadge email={email} onBack={() => setView('home')} />
+      </>
+    );
+  }
+
+  if (view === 'library') {
+    return <Library ownerId={session.user.id} onBack={() => setView('home')} />;
+  }
+
   return (
-    <>
-      <WorshipMixer />
-      <SignedInBadge email={session.user.email ?? '?'} />
-    </>
+    <Home
+      email={email}
+      onOpenMixer={() => setView('mixer')}
+      onOpenLibrary={() => setView('library')}
+      onSignOut={() => supabase.auth.signOut()}
+    />
   );
 }
 
-function SignedInBadge({ email }: { email: string }) {
+function FloatingBackBadge({ email, onBack }: { email: string; onBack: () => void }) {
   return (
     <div
       style={{
@@ -69,7 +92,7 @@ function SignedInBadge({ email }: { email: string }) {
     >
       <span>{email}</span>
       <button
-        onClick={() => supabase.auth.signOut()}
+        onClick={onBack}
         style={{
           background: 'transparent',
           border: '1px solid rgba(255,255,255,0.15)',
@@ -80,7 +103,7 @@ function SignedInBadge({ email }: { email: string }) {
           cursor: 'pointer',
         }}
       >
-        Sign out
+        ← Home
       </button>
     </div>
   );
