@@ -1,5 +1,6 @@
 import type { Visibility } from './visibility.js';
 import type { PartLayer } from './parts.js';
+import type { Section } from './section.js';
 
 /**
  * The normalized song record. This is the contract Charter and Vocal
@@ -20,8 +21,11 @@ export type SongRecord = {
   created_at: string;   // ISO timestamp
   updated_at: string;   // ISO timestamp
 
-  /** Phase 1 expands. */
-  sections?: unknown;
+  /** Ordered list of sections — both structural (chord chart content,
+   *  authored by Charter) and temporal (start/end times + vocal
+   *  arrangement, authored by Vocal Booth). Each app reads the slots
+   *  it cares about. See packages/core/src/section.ts. */
+  sections?: Section[];
   /** Phase 1 expands. */
   lyrics?: unknown;
   /** Phase 1 expands; will be a list of typed PartLayer. */
