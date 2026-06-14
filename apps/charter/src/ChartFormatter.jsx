@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Plus, Trash2, Lock, Unlock, Music, Save, Upload, ChevronUp, ChevronDown, X, GripVertical, Eye, Edit3, FileDown, UploadCloud, Loader2, AlertCircle, CheckCircle2, Undo2, Redo2 } from "lucide-react";
+import { transposeNote } from "@worship/core";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
-const NOTES_SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-const NOTES_FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
 const ALL_KEYS = ['A','Bb','B','C','C#','D','Eb','E','F','F#','G','Ab'];
 const TIME_SIGS = ['2/4','3/4','4/4','5/4','6/4','6/8','7/8','12/8'];
 
@@ -36,14 +35,6 @@ function parseChordRoot(chord) {
   const m = chord.match(/^([A-G][#b♯♭]?)(.*?)(?:\/([A-G][#b♯♭]?)(.*))?$/);
   if (!m) return null;
   return { root: m[1], quality: m[2] || '', bass: m[3] || null, bassQuality: m[4] || '' };
-}
-
-function transposeNote(note, semi, useFlats) {
-  const src = useFlats ? NOTES_FLAT : NOTES_SHARP;
-  let i = NOTES_SHARP.indexOf(note);
-  if (i === -1) i = NOTES_FLAT.indexOf(note);
-  if (i === -1) return note;
-  return src[((i + semi) % 12 + 12) % 12];
 }
 
 function transposeChord(name, semi, useFlats = false) {

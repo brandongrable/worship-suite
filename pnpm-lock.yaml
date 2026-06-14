@@ -17,6 +17,9 @@ importers:
 
   apps/charter:
     dependencies:
+      '@worship/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       lucide-react:
         specifier: ^0.456.0
         version: 0.456.0(react@18.3.1)
@@ -51,6 +54,9 @@ importers:
 
   apps/vocal-booth:
     dependencies:
+      '@worship/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       react:
         specifier: ^18.3.1
         version: 18.3.1

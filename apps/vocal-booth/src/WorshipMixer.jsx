@@ -1,30 +1,10 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { getKeyOptions, formatTime } from "@worship/core";
 
 /* ── Color System ── */
 const PART_COLORS = { soprano: "#E8C840", alto: "#D94545", tenor: "#4FBCD0", baritone: "#5B8C3E" };
 const UNISON_COLOR = "#9B6AD8";
 const HARMONY_PARTS = ["soprano", "alto", "tenor", "baritone"];
-
-/* ── Key Transpose ── */
-const NOTE_SHARP = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-const NOTE_FLAT = ["C","Db","D","Eb","E","F","Gb","G","Ab","A","Bb","B"];
-function transposeKey(key, semi) {
-  const isFlat = key.includes("b");
-  const names = isFlat ? NOTE_FLAT : NOTE_SHARP;
-  let idx = names.indexOf(key);
-  if (idx === -1) idx = NOTE_SHARP.indexOf(key);
-  if (idx === -1) idx = NOTE_FLAT.indexOf(key);
-  if (idx === -1) return key;
-  return names[((idx + semi) % 12 + 12) % 12];
-}
-function getKeyOptions(baseKey) {
-  const opts = [];
-  for (let i = 2; i >= -2; i--) {
-    const k = transposeKey(baseKey, i);
-    opts.push({ key: k, offset: i, label: i === 0 ? `${k} (Original)` : `${k} (${i > 0 ? "+" : ""}${i})` });
-  }
-  return opts;
-}
 
 /* ── Track Definitions ── */
 const TRACKS = [
@@ -163,11 +143,6 @@ const SETLISTS = [
     ],
   },
 ];
-
-function formatTime(s) {
-  const m = Math.floor(s / 60);
-  return `${m}:${Math.floor(s % 60).toString().padStart(2, "0")}`;
-}
 
 /* ═══════════════════════════════════════════════ */
 /* ── Audio Engine Hook ── */
