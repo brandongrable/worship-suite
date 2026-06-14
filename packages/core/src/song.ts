@@ -1,5 +1,5 @@
 import type { Visibility } from './visibility.js';
-import type { PartLayer } from './parts.js';
+import type { PartLayer, StemTrack } from './partlayer.js';
 import type { Section } from './section.js';
 
 /**
@@ -28,10 +28,15 @@ export type SongRecord = {
   sections?: Section[];
   /** Phase 1 expands. */
   lyrics?: unknown;
-  /** Phase 1 expands; will be a list of typed PartLayer. */
+  /** Per-vocal-part harmony lines (symbolic note data). Pipeline
+   *  authors these; absence means the song has no rendered harmonies
+   *  yet, or was imported as stems-only. */
   parts?: PartLayer[];
-  /** Phase 1 expands. Maps part/track id → storage path under stems bucket. */
-  stems?: Record<string, string>;
+
+  /** Manifest mapping each track to its storage path under the
+   *  `stems` bucket. Keys are constrained to the source tracks
+   *  ('click' | 'band' | 'lead') and the four harmony parts. */
+  stems?: Partial<Record<StemTrack, string>>;
 };
 
 export type Setlist = {
