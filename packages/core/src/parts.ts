@@ -12,20 +12,21 @@ export const PARTS = [
 ] as const;
 export type Part = (typeof PARTS)[number];
 
+/**
+ * Brand palette for vocal parts. Tuned against the Vocal Booth dark UI
+ * (verified visually); reads correctly on light backgrounds too.
+ */
 export const PART_COLOR: Record<Part, string> = {
-  soprano:  '#f1c40f', // yellow
-  alto:     '#e74c3c', // red
-  tenor:    '#16a085', // teal
-  baritone: '#27ae60', // green
-  unison:   '#8e44ad', // purple
+  soprano:  '#E8C840', // mustard yellow
+  alto:     '#D94545', // brick red
+  tenor:    '#4FBCD0', // cyan-teal
+  baritone: '#5B8C3E', // olive green
+  unison:   '#9B6AD8', // lavender
 };
 
 /**
- * A predicted/tuned harmony layer for one part, structurally keyed to
- * aligned columns. The exact shape (degrees? intervals?) is finalized in
- * Phase 1's contract work; this stub keeps the part identity locked.
+ * The four parts that sing harmony lines (everything except unison,
+ * which describes a section behavior rather than a distinct layer).
  */
-export type PartLayer = {
-  part: Part;
-  /** Phase 1 expands: degrees per aligned column, render hints, etc. */
-};
+export const HARMONY_PARTS = ['soprano', 'alto', 'tenor', 'baritone'] as const;
+export type HarmonyPart = (typeof HARMONY_PARTS)[number];
