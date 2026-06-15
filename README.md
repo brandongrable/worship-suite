@@ -85,4 +85,6 @@ The aligner is a Python package with its own README/tests/git history. Pipeline 
 
 ## Roadmap
 
-Phase plan lives in chat. Current state: **Phase 1 — foundation contracts and auth slice landed**. Open verification items are tracked in conversation.
+See [`PHASES.md`](./PHASES.md) for the full phased plan and current state.
+
+Current: **Phase 2 done** (producer Pipeline + audio playback round-trip). Next: **Phase 3** (wire the Vocal Booth mixer to real songs).
