@@ -249,6 +249,7 @@ export default function App() {
           key: fifthsToKey(review.summary.key_fifths),
           bpm: review.summary.tempo_bpm,
           lead_gender: publishLead,
+          record: review,
         },
       });
       setPublishResult(res);

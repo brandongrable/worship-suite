@@ -3,6 +3,30 @@ import type { Song } from './lib/songs';
 const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 const sansFont = "'DM Sans', sans-serif";
 
+type RecordSummary = {
+  notes_total?: number;
+  words_total?: number;
+  word_start_notes?: number;
+  continuation_notes?: number;
+  instrumental_notes?: number;
+  measure_count?: number;
+  tempo_bpm?: number;
+  ticks_per_beat?: number;
+  key_fifths?: number;
+  beats_per_bar?: number;
+  divisions?: number;
+};
+
+type RecordShape = {
+  song?: string;
+  source_midi?: string;
+  source_json?: string;
+  output_musicxml?: string;
+  summary?: RecordSummary;
+  items?: Array<{ kind: string }>;
+  structure_check?: { ok: boolean; message: string } | null;
+};
+
 export default function SongDetail({
   song,
   ownedByMe,
@@ -86,13 +110,132 @@ export default function SongDetail({
         <Kv k="created_at" v={created} mono />
         <Kv k="updated_at" v={updated} mono />
 
+        <SectionLabel>Pipeline payload</SectionLabel>
+        <PipelinePayload record={song.record} />
+
         <SectionLabel>Sections</SectionLabel>
         <Muted>
-          No sections yet. Pipeline will populate <code>sections</code>, <code>parts</code>, and
-          the stems manifest in a future slice; for now this song carries only the
-          metadata above.
+          No structured sections yet. Pipeline will populate <code>sections</code>,{' '}
+          <code>parts</code>, and the stems manifest as dedicated columns in a future slice.
         </Muted>
       </div>
+    </div>
+  );
+}
+
+function PipelinePayload({ record }: { record: Song['record'] }) {
+  const r = (record ?? {}) as RecordShape;
+  const summary = r.summary;
+  const itemCount = r.items?.length ?? 0;
+
+  if (!summary && !r.source_midi) {
+    return (
+      <Muted>
+        This song was published with no Pipeline payload (just the metadata above).
+      </Muted>
+    );
+  }
+
+  return (
+    <div>
+      {summary && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 6,
+            marginBottom: 12,
+          }}
+        >
+          <Stat label="tempo" value={`${summary.tempo_bpm ?? '?'} bpm`} />
+          <Stat
+            label="key fifths"
+            value={
+              summary.key_fifths != null
+                ? `${summary.key_fifths >= 0 ? '+' : ''}${summary.key_fifths}`
+                : '?'
+            }
+          />
+          <Stat label="meter" value={`${summary.beats_per_bar ?? '?'}/4`} />
+          <Stat label="measures" value={String(summary.measure_count ?? '?')} />
+          <Stat label="words" value={String(summary.words_total ?? '?')} />
+          <Stat label="notes" value={String(summary.notes_total ?? '?')} />
+          <Stat
+            label="continuations"
+            value={String(summary.continuation_notes ?? '?')}
+          />
+          <Stat
+            label="instrumental"
+            value={String(summary.instrumental_notes ?? '?')}
+          />
+        </div>
+      )}
+      {itemCount > 0 && (
+        <div
+          style={{
+            padding: '8px 12px',
+            borderRadius: 8,
+            background: 'rgba(232,200,64,0.06)',
+            border: '1px solid rgba(232,200,64,0.2)',
+            fontSize: 12,
+            fontFamily: monoFont,
+            color: '#E8C840',
+            marginBottom: 8,
+          }}
+        >
+          {itemCount} review flag{itemCount === 1 ? '' : 's'} from the aligner — open
+          Pipeline to inspect.
+        </div>
+      )}
+      {r.structure_check && (
+        <div
+          style={{
+            padding: '8px 12px',
+            borderRadius: 8,
+            background: r.structure_check.ok
+              ? 'rgba(91,140,62,0.08)'
+              : 'rgba(217,69,69,0.08)',
+            border: r.structure_check.ok
+              ? '1px solid rgba(91,140,62,0.3)'
+              : '1px solid rgba(217,69,69,0.3)',
+            fontSize: 12,
+            color: r.structure_check.ok ? '#5B8C3E' : '#D94545',
+            marginBottom: 8,
+          }}
+        >
+          structure: {r.structure_check.message}
+        </div>
+      )}
+      {r.source_midi && <Kv k="source midi" v={r.source_midi} mono />}
+      {r.source_json && <Kv k="source json" v={r.source_json} mono />}
+      {r.output_musicxml && <Kv k="output xml" v={r.output_musicxml} mono />}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: '8px 10px',
+        borderRadius: 6,
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.05)',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 9,
+          color: 'rgba(255,255,255,0.4)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+          fontFamily: monoFont,
+          marginBottom: 2,
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 13, fontFamily: monoFont, fontWeight: 600 }}>{value}</div>
     </div>
   );
 }

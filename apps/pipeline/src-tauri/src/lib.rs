@@ -157,6 +157,9 @@ struct PublishInput {
     key: String,
     bpm: f64,
     lead_gender: String,
+    /// Optional. The full sidecar review JSON (or any other producer
+    /// payload). Written to songs.record JSONB. Pass null to skip.
+    record: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -183,7 +186,7 @@ fn publish_song(input: PublishInput) -> Result<PublishResult, String> {
 
     let endpoint = format!("{}/rest/v1/songs", url.trim_end_matches('/'));
 
-    let body = json!({
+    let mut body = json!({
         "owner_id": owner,
         "title": input.title,
         "key": input.key,
@@ -191,6 +194,9 @@ fn publish_song(input: PublishInput) -> Result<PublishResult, String> {
         "lead_gender": input.lead_gender,
         "visibility": "private",
     });
+    if let Some(record) = input.record {
+        body["record"] = record;
+    }
 
     let resp = ureq::post(&endpoint)
         .set("apikey", &key)
