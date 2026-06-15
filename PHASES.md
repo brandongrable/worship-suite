@@ -98,10 +98,7 @@ Reloading drops the user back where they left off
 ⟳ button next to the title; surfaces freshly-published rows without a
 hard reload
 
-## Phase 4 — Sections + harmony parts  🟡 mostly done
-
-Only 4.3 (PartLayer[] from aligner) remains. Everything else has
-shipped end-to-end.
+## Phase 4 — Sections + harmony parts  ✅ done
 
 Real arrangement data lands so the mixer's section bar and part-status
 display work for actual songs.
@@ -129,7 +126,24 @@ display work for actual songs.
       classified types or fill in `partStatus` (the producer side
       always emits all-inactive; harmony arrangement is the owner's
       authoring concern).
-- 4.3 📋 — Pipeline writes `parts: PartLayer[]` from the aligner output
+- 4.3 ✅ — `parts: PartLayer[]` flow established end-to-end:
+    * **4.3a (aligner)** — new `parts.compute_lead_part` walks the
+      alignment and emits the lead vocal melody as one PartLayer
+      keyed `unison` (the reference melody during unison sections).
+      Each PartNote carries col / section_index / onset / duration /
+      pitch / syllable / confidence. Always emitted, even when no
+      structure drove the run (section_index is null in that case).
+    * **4.3b (Pipeline)** — `normalize_parts_in_record` rewrites
+      each note's `section_index` to the canonical `sectionId` from
+      the matching position in `record.sections`. Out-of-range or
+      null indices land as `sectionId: ""` rather than failing the
+      publish.
+
+    Schema now matches `@worship/core`'s PartLayer exactly. No
+    consumer UI yet — future score / pitch-reference features
+    (post-MVP) will read from `record.parts` directly. Harmony
+    parts (separate MIDI inputs per voice) deferred to a later
+    slice; the schema is ready when they land.
 - 4.4 ✅ — Vocal Booth mixer renders real section boundaries via the
   4.1 adapter; verified with 4.2 producer output. Real part-status
   flows when authored via 4.2c.
