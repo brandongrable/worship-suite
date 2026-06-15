@@ -1,6 +1,8 @@
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::env;
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Serialize)]
@@ -119,8 +121,144 @@ fn load_review(path: String) -> Result<Value, String> {
     serde_json::from_str(&raw).map_err(|e| format!("parse {}: {}", path, e))
 }
 
+#[derive(Serialize)]
+struct PublishConfig {
+    has_url: bool,
+    has_service_key: bool,
+    has_producer_id: bool,
+    url_host: Option<String>,
+}
+
+/// Report which of the publish env vars Pipeline can see. UI surfaces
+/// this so the producer knows which keys still need to land in
+/// .env.local before "Publish" will work.
+#[tauri::command]
+fn publish_config() -> PublishConfig {
+    let url = env::var("SUPABASE_URL").ok();
+    PublishConfig {
+        has_url: url.as_ref().is_some_and(|s| !s.is_empty()),
+        has_service_key: env::var("SUPABASE_SERVICE_ROLE_KEY")
+            .ok()
+            .is_some_and(|s| !s.is_empty()),
+        has_producer_id: env::var("WORSHIP_PRODUCER_USER_ID")
+            .ok()
+            .is_some_and(|s| !s.is_empty()),
+        url_host: url.and_then(|u| {
+            u.split("://").nth(1).map(|rest| {
+                rest.split('/').next().unwrap_or(rest).to_string()
+            })
+        }),
+    }
+}
+
+#[derive(Deserialize)]
+struct PublishInput {
+    title: String,
+    key: String,
+    bpm: f64,
+    lead_gender: String,
+}
+
+#[derive(Serialize)]
+struct PublishResult {
+    id: String,
+    owner_id: String,
+    title: String,
+}
+
+/// Insert a minimal song row into the Supabase `songs` table via
+/// PostgREST. Uses the service role key (RLS-bypassing) so this works
+/// without an end-user session — appropriate for a producer/admin
+/// tool that owns canonical writes.
+///
+/// owner_id is read from WORSHIP_PRODUCER_USER_ID; that uuid must
+/// belong to an existing auth.users row (FK constraint).
+#[tauri::command]
+fn publish_song(input: PublishInput) -> Result<PublishResult, String> {
+    let url = env::var("SUPABASE_URL").map_err(|_| "SUPABASE_URL not set".to_string())?;
+    let key = env::var("SUPABASE_SERVICE_ROLE_KEY")
+        .map_err(|_| "SUPABASE_SERVICE_ROLE_KEY not set".to_string())?;
+    let owner = env::var("WORSHIP_PRODUCER_USER_ID")
+        .map_err(|_| "WORSHIP_PRODUCER_USER_ID not set".to_string())?;
+
+    let endpoint = format!("{}/rest/v1/songs", url.trim_end_matches('/'));
+
+    let body = json!({
+        "owner_id": owner,
+        "title": input.title,
+        "key": input.key,
+        "bpm": input.bpm,
+        "lead_gender": input.lead_gender,
+        "visibility": "private",
+    });
+
+    let resp = ureq::post(&endpoint)
+        .set("apikey", &key)
+        .set("Authorization", &format!("Bearer {}", key))
+        .set("Content-Type", "application/json")
+        .set("Prefer", "return=representation")
+        .send_json(body)
+        .map_err(|e| match e {
+            ureq::Error::Status(code, response) => {
+                let body = response.into_string().unwrap_or_default();
+                format!("supabase returned {} — {}", code, body)
+            }
+            ureq::Error::Transport(t) => format!("transport: {}", t),
+        })?;
+
+    let inserted: Vec<Value> = resp
+        .into_json()
+        .map_err(|e| format!("could not parse insert response: {}", e))?;
+
+    let row = inserted
+        .into_iter()
+        .next()
+        .ok_or_else(|| "supabase returned empty insert array".to_string())?;
+
+    Ok(PublishResult {
+        id: row
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        owner_id: row
+            .get("owner_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        title: row
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+/// Walk up from the binary to find the workspace-root .env.local and
+/// load its KEY=VALUE pairs into the process env. Best-effort: any
+/// failure (file missing, parse error) is silent — publish_config
+/// will surface which keys ended up unset.
+fn load_workspace_env() {
+    // In `tauri dev`, current_exe() is .../apps/pipeline/src-tauri/target/debug/pipeline.
+    // The workspace root is 4 levels up.
+    if let Ok(exe) = env::current_exe() {
+        let mut dir: PathBuf = exe.clone();
+        for _ in 0..6 {
+            if !dir.pop() {
+                break;
+            }
+            let candidate = dir.join(".env.local");
+            if candidate.exists() {
+                let _ = dotenvy::from_path(&candidate);
+                break;
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    load_workspace_env();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -128,7 +266,9 @@ pub fn run() {
             health_check,
             python_check,
             run_aligner,
-            load_review
+            load_review,
+            publish_config,
+            publish_song
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

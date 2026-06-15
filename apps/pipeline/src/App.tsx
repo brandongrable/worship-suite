@@ -57,6 +57,19 @@ type StructureCheck = {
   suggested_repeats: number | null;
 };
 
+type PublishConfig = {
+  has_url: boolean;
+  has_service_key: boolean;
+  has_producer_id: boolean;
+  url_host: string | null;
+};
+
+type PublishResult = {
+  id: string;
+  owner_id: string;
+  title: string;
+};
+
 function deriveOutPath(midiPath: string): string {
   const lastSep = Math.max(midiPath.lastIndexOf('/'), midiPath.lastIndexOf('\\'));
   const dir = lastSep >= 0 ? midiPath.slice(0, lastSep + 1) : '';
@@ -98,12 +111,31 @@ export default function App() {
 
   const [review, setReview] = useState<ReviewSidecar | null>(null);
   const [reviewPath, setReviewPath] = useState<string | null>(null);
+
+  const [publishCfg, setPublishCfg] = useState<PublishConfig | null>(null);
+  const [publishTitle, setPublishTitle] = useState('');
+  const [publishLead, setPublishLead] = useState<'male' | 'female'>('male');
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
+  const [publishErr, setPublishErr] = useState<string | null>(null);
   const [reviewErr, setReviewErr] = useState<string | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
 
   useEffect(() => {
     invoke<Health>('health_check').then(setHealth).catch((e) => setHealthErr(String(e)));
+    invoke<PublishConfig>('publish_config').then(setPublishCfg).catch(() => {});
   }, []);
+
+  // Pre-fill publish title from sidecar (song name or MIDI filename) when a
+  // review loads.
+  useEffect(() => {
+    if (!review || publishTitle) return;
+    const candidate =
+      review.song ||
+      review.source_midi?.split(/[/\\]/).pop()?.replace(/\.(mid|midi)$/i, '') ||
+      '';
+    if (candidate) setPublishTitle(candidate);
+  }, [review, publishTitle]);
 
   async function detectPython() {
     setPythonChecking(true);
@@ -202,6 +234,28 @@ export default function App() {
       await revealItemInDir(result.out_path);
     } catch (e) {
       console.error('reveal failed', e);
+    }
+  }
+
+  async function publishSong() {
+    if (!review) return;
+    setPublishing(true);
+    setPublishErr(null);
+    setPublishResult(null);
+    try {
+      const res = await invoke<PublishResult>('publish_song', {
+        input: {
+          title: publishTitle.trim(),
+          key: fifthsToKey(review.summary.key_fifths),
+          bpm: review.summary.tempo_bpm,
+          lead_gender: publishLead,
+        },
+      });
+      setPublishResult(res);
+    } catch (e) {
+      setPublishErr(String(e));
+    } finally {
+      setPublishing(false);
     }
   }
 
@@ -351,7 +405,125 @@ export default function App() {
           </>
         )}
       </section>
+
+      <section className="card">
+        <h2>Publish</h2>
+        {publishCfg && <PublishEnvStatus cfg={publishCfg} />}
+        {!review && (
+          <div className="muted" style={{ marginTop: 10 }}>
+            Load a review above. Publish writes a minimal song record (title, key, BPM,
+            lead gender) to Supabase.
+          </div>
+        )}
+        {review && (
+          <div style={{ marginTop: 12 }}>
+            <div className="picker-grid">
+              <div className="picker-row">
+                <span className="k">title</span>
+                <input
+                  className="path-input"
+                  value={publishTitle}
+                  onChange={(e) => setPublishTitle(e.target.value)}
+                  placeholder="Song title"
+                  disabled={publishing}
+                />
+              </div>
+              <div className="picker-row">
+                <span className="k">key</span>
+                <span className="v">{fifthsToKey(review.summary.key_fifths)}</span>
+              </div>
+              <div className="picker-row">
+                <span className="k">bpm</span>
+                <span className="v">{review.summary.tempo_bpm}</span>
+              </div>
+              <div className="picker-row">
+                <span className="k">lead</span>
+                <select
+                  className="path-input"
+                  value={publishLead}
+                  onChange={(e) => setPublishLead(e.target.value as 'male' | 'female')}
+                  disabled={publishing}
+                >
+                  <option value="male">male</option>
+                  <option value="female">female</option>
+                </select>
+              </div>
+            </div>
+            <button
+              className="btn"
+              style={{ marginTop: 12 }}
+              onClick={publishSong}
+              disabled={
+                publishing ||
+                !publishTitle.trim() ||
+                !publishCfg?.has_url ||
+                !publishCfg?.has_service_key ||
+                !publishCfg?.has_producer_id
+              }
+            >
+              {publishing ? 'Publishing…' : 'Publish to Supabase'}
+            </button>
+            {publishErr && (
+              <div className="error" style={{ marginTop: 10 }}>
+                {publishErr}
+              </div>
+            )}
+            {publishResult && (
+              <div className="struct-check struct-ok" style={{ marginTop: 12 }}>
+                <div className="struct-head">
+                  <span className="struct-badge">Published</span>
+                  <span className="muted">id {publishResult.id.slice(0, 8)}…</span>
+                </div>
+                <div className="struct-msg">
+                  <strong>{publishResult.title}</strong> is now in the songs table. Refresh
+                  Vocal Booth's Library to see it.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </main>
+  );
+}
+
+function PublishEnvStatus({ cfg }: { cfg: PublishConfig }) {
+  const allSet = cfg.has_url && cfg.has_service_key && cfg.has_producer_id;
+  if (allSet) {
+    return (
+      <ul className="kv">
+        <li>
+          <span className="k">target</span>
+          <span className="v ok-text">{cfg.url_host}</span>
+        </li>
+      </ul>
+    );
+  }
+  return (
+    <div className="muted">
+      Set these in <code>.env.local</code> at the workspace root, then restart the dev
+      server:
+      <ul className="kv" style={{ marginTop: 8 }}>
+        <li>
+          <span className="k">SUPABASE_URL</span>
+          <span className={'v ' + (cfg.has_url ? 'ok-text' : 'error-text')}>
+            {cfg.has_url ? '✓ set' : '✗ missing'}
+          </span>
+        </li>
+        <li>
+          <span className="k">SUPABASE_SERVICE_ROLE_KEY</span>
+          <span className={'v ' + (cfg.has_service_key ? 'ok-text' : 'error-text')}>
+            {cfg.has_service_key ? '✓ set' : '✗ missing'}
+          </span>
+        </li>
+        <li>
+          <span className="k">WORSHIP_PRODUCER_USER_ID</span>
+          <span className={'v ' + (cfg.has_producer_id ? 'ok-text' : 'error-text')}>
+            {cfg.has_producer_id ? '✓ set' : '✗ missing'}
+          </span>
+        </li>
+      </ul>
+    </div>
   );
 }
 
