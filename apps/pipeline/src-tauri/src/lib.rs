@@ -240,6 +240,159 @@ fn publish_song(input: PublishInput) -> Result<PublishResult, String> {
     })
 }
 
+#[derive(Deserialize)]
+struct UploadStemInput {
+    song_id: String,
+    track: String,
+    file_path: String,
+}
+
+#[derive(Serialize)]
+struct UploadStemResult {
+    storage_key: String,
+    bytes: u64,
+    content_type: String,
+}
+
+fn audio_content_type(ext: &str) -> &'static str {
+    match ext {
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "m4a" | "aac" => "audio/mp4",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Upload an audio file to the `stems` storage bucket at
+/// `stems/<song_id>/<track>.<ext>`. Uses upsert so re-uploading the
+/// same track replaces it.
+#[tauri::command]
+fn upload_stem(input: UploadStemInput) -> Result<UploadStemResult, String> {
+    let url = env::var("SUPABASE_URL").map_err(|_| "SUPABASE_URL not set".to_string())?;
+    let key = env::var("SUPABASE_SERVICE_ROLE_KEY")
+        .map_err(|_| "SUPABASE_SERVICE_ROLE_KEY not set".to_string())?;
+
+    let path = std::path::Path::new(&input.file_path);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("bin")
+        .to_lowercase();
+    let content_type = audio_content_type(&ext);
+
+    let bytes = fs::read(&input.file_path)
+        .map_err(|e| format!("read {}: {}", input.file_path, e))?;
+    let byte_count = bytes.len() as u64;
+
+    let key_in_bucket = format!("{}/{}.{}", input.song_id, input.track, ext);
+    let endpoint = format!(
+        "{}/storage/v1/object/stems/{}",
+        url.trim_end_matches('/'),
+        key_in_bucket
+    );
+
+    let resp = ureq::post(&endpoint)
+        .set("apikey", &key)
+        .set("Authorization", &format!("Bearer {}", key))
+        .set("Content-Type", content_type)
+        .set("x-upsert", "true")
+        .send_bytes(&bytes)
+        .map_err(|e| match e {
+            ureq::Error::Status(code, response) => {
+                let body = response.into_string().unwrap_or_default();
+                format!("upload returned {} — {}", code, body)
+            }
+            ureq::Error::Transport(t) => format!("transport: {}", t),
+        })?;
+
+    // Storage returns JSON {Key, Id, ...} but we don't need to parse it.
+    let _ = resp.into_string();
+
+    Ok(UploadStemResult {
+        storage_key: format!("stems/{}", key_in_bucket),
+        bytes: byte_count,
+        content_type: content_type.to_string(),
+    })
+}
+
+#[derive(Deserialize)]
+struct PatchStemsInput {
+    song_id: String,
+    track: String,
+    storage_key: String,
+}
+
+/// After a successful stem upload, record the storage key on the song
+/// row by augmenting `songs.record.stems` with the new track.
+///
+/// PostgREST doesn't have a great in-place JSONB patch primitive, so
+/// we read the current record, merge in memory, and write back.
+#[tauri::command]
+fn patch_song_stems(input: PatchStemsInput) -> Result<Value, String> {
+    let url = env::var("SUPABASE_URL").map_err(|_| "SUPABASE_URL not set".to_string())?;
+    let key = env::var("SUPABASE_SERVICE_ROLE_KEY")
+        .map_err(|_| "SUPABASE_SERVICE_ROLE_KEY not set".to_string())?;
+    let base = url.trim_end_matches('/');
+
+    // 1. Read current record.
+    let select_endpoint = format!(
+        "{}/rest/v1/songs?id=eq.{}&select=record",
+        base, input.song_id
+    );
+    let resp = ureq::get(&select_endpoint)
+        .set("apikey", &key)
+        .set("Authorization", &format!("Bearer {}", key))
+        .call()
+        .map_err(|e| format!("fetch record: {}", e))?;
+    let rows: Vec<Value> = resp.into_json().map_err(|e| format!("parse rows: {}", e))?;
+    let row = rows
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("song {} not found", input.song_id))?;
+    let mut record = row
+        .get("record")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if !record.is_object() {
+        record = json!({});
+    }
+
+    // 2. Merge in the new stem entry.
+    {
+        let record_obj = record.as_object_mut().expect("record is object");
+        let stems = record_obj
+            .entry("stems".to_string())
+            .or_insert_with(|| json!({}));
+        if !stems.is_object() {
+            *stems = json!({});
+        }
+        stems
+            .as_object_mut()
+            .expect("stems is object")
+            .insert(input.track.clone(), Value::String(input.storage_key.clone()));
+    }
+
+    // 3. Write back.
+    let patch_endpoint = format!("{}/rest/v1/songs?id=eq.{}", base, input.song_id);
+    let resp = ureq::patch(&patch_endpoint)
+        .set("apikey", &key)
+        .set("Authorization", &format!("Bearer {}", key))
+        .set("Content-Type", "application/json")
+        .set("Prefer", "return=representation")
+        .send_json(json!({ "record": record }))
+        .map_err(|e| match e {
+            ureq::Error::Status(code, response) => {
+                let body = response.into_string().unwrap_or_default();
+                format!("patch returned {} — {}", code, body)
+            }
+            ureq::Error::Transport(t) => format!("transport: {}", t),
+        })?;
+    let updated: Value = resp.into_json().map_err(|e| format!("parse patch: {}", e))?;
+    Ok(updated)
+}
+
 /// Walk up from the binary to find the workspace-root .env.local and
 /// load its KEY=VALUE pairs into the process env. Best-effort: any
 /// failure (file missing, parse error) is silent — publish_config
@@ -274,7 +427,9 @@ pub fn run() {
             run_aligner,
             load_review,
             publish_config,
-            publish_song
+            publish_song,
+            upload_stem,
+            patch_song_stems
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

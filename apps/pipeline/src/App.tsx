@@ -70,6 +70,37 @@ type PublishResult = {
   title: string;
 };
 
+type StemTrack =
+  | 'click'
+  | 'band'
+  | 'lead'
+  | 'soprano'
+  | 'alto'
+  | 'tenor'
+  | 'baritone';
+
+const STEM_TRACKS: StemTrack[] = [
+  'click',
+  'band',
+  'lead',
+  'soprano',
+  'alto',
+  'tenor',
+  'baritone',
+];
+
+type UploadStemResult = {
+  storage_key: string;
+  bytes: number;
+  content_type: string;
+};
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function deriveOutPath(midiPath: string): string {
   const lastSep = Math.max(midiPath.lastIndexOf('/'), midiPath.lastIndexOf('\\'));
   const dir = lastSep >= 0 ? midiPath.slice(0, lastSep + 1) : '';
@@ -120,6 +151,14 @@ export default function App() {
   const [publishErr, setPublishErr] = useState<string | null>(null);
   const [reviewErr, setReviewErr] = useState<string | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
+
+  const [stemTrack, setStemTrack] = useState<StemTrack>('lead');
+  const [stemFile, setStemFile] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState<string | null>(null);
+  const [uploadedStems, setUploadedStems] = useState<
+    Array<{ track: string; storage_key: string; bytes: number }>
+  >([]);
 
   useEffect(() => {
     invoke<Health>('health_check').then(setHealth).catch((e) => setHealthErr(String(e)));
@@ -242,6 +281,7 @@ export default function App() {
     setPublishing(true);
     setPublishErr(null);
     setPublishResult(null);
+    setUploadedStems([]);
     try {
       const res = await invoke<PublishResult>('publish_song', {
         input: {
@@ -257,6 +297,37 @@ export default function App() {
       setPublishErr(String(e));
     } finally {
       setPublishing(false);
+    }
+  }
+
+  async function pickStem() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'] }],
+    });
+    if (typeof selected === 'string') setStemFile(selected);
+  }
+
+  async function uploadStem() {
+    if (!publishResult || !stemFile) return;
+    setUploading(true);
+    setUploadErr(null);
+    try {
+      const r = await invoke<UploadStemResult>('upload_stem', {
+        input: { song_id: publishResult.id, track: stemTrack, file_path: stemFile },
+      });
+      await invoke('patch_song_stems', {
+        input: { song_id: publishResult.id, track: stemTrack, storage_key: r.storage_key },
+      });
+      setUploadedStems((prev) => [
+        ...prev.filter((s) => s.track !== stemTrack),
+        { track: stemTrack, storage_key: r.storage_key, bytes: r.bytes },
+      ]);
+      setStemFile(null);
+    } catch (e) {
+      setUploadErr(String(e));
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -470,16 +541,86 @@ export default function App() {
               </div>
             )}
             {publishResult && (
-              <div className="struct-check struct-ok" style={{ marginTop: 12 }}>
-                <div className="struct-head">
-                  <span className="struct-badge">Published</span>
-                  <span className="muted">id {publishResult.id.slice(0, 8)}…</span>
+              <>
+                <div className="struct-check struct-ok" style={{ marginTop: 12 }}>
+                  <div className="struct-head">
+                    <span className="struct-badge">Published</span>
+                    <span className="muted">id {publishResult.id.slice(0, 8)}…</span>
+                  </div>
+                  <div className="struct-msg">
+                    <strong>{publishResult.title}</strong> is now in the songs table. Refresh
+                    Vocal Booth's Library to see it.
+                  </div>
                 </div>
-                <div className="struct-msg">
-                  <strong>{publishResult.title}</strong> is now in the songs table. Refresh
-                  Vocal Booth's Library to see it.
+
+                <div style={{ marginTop: 16 }}>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      color: 'rgba(255,255,255,0.5)',
+                      fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Stems for this song
+                  </div>
+                  <div className="picker-row">
+                    <span className="k">track</span>
+                    <select
+                      className="path-input"
+                      value={stemTrack}
+                      onChange={(e) => setStemTrack(e.target.value as StemTrack)}
+                      disabled={uploading}
+                    >
+                      {STEM_TRACKS.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn btn-ghost"
+                      onClick={pickStem}
+                      disabled={uploading}
+                    >
+                      Pick audio…
+                    </button>
+                  </div>
+                  {stemFile && (
+                    <div className="picker-row" style={{ marginTop: 6 }}>
+                      <span className="k">file</span>
+                      <span className="v path-cell">{stemFile}</span>
+                      <button
+                        className="btn"
+                        onClick={uploadStem}
+                        disabled={uploading || !stemFile}
+                      >
+                        {uploading ? 'Uploading…' : 'Upload'}
+                      </button>
+                    </div>
+                  )}
+                  {uploadErr && (
+                    <div className="error" style={{ marginTop: 10 }}>
+                      {uploadErr}
+                    </div>
+                  )}
+                  {uploadedStems.length > 0 && (
+                    <ul className="kv" style={{ marginTop: 12 }}>
+                      {uploadedStems.map((s) => (
+                        <li key={s.track}>
+                          <span className="k">{s.track}</span>
+                          <span className="v">
+                            <span className="ok-text">✓ </span>
+                            {s.storage_key} <span className="muted">({formatBytes(s.bytes)})</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
-              </div>
+              </>
             )}
           </div>
         )}

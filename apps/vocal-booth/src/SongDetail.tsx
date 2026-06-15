@@ -25,6 +25,7 @@ type RecordShape = {
   summary?: RecordSummary;
   items?: Array<{ kind: string }>;
   structure_check?: { ok: boolean; message: string } | null;
+  stems?: Record<string, string>;
 };
 
 export default function SongDetail({
@@ -113,12 +114,69 @@ export default function SongDetail({
         <SectionLabel>Pipeline payload</SectionLabel>
         <PipelinePayload record={song.record} />
 
+        <SectionLabel>Stems</SectionLabel>
+        <StemsList record={song.record} />
+
         <SectionLabel>Sections</SectionLabel>
         <Muted>
-          No structured sections yet. Pipeline will populate <code>sections</code>,{' '}
-          <code>parts</code>, and the stems manifest as dedicated columns in a future slice.
+          No structured sections yet. Pipeline will populate <code>sections</code> and{' '}
+          <code>parts</code> as dedicated columns in a future slice.
         </Muted>
       </div>
+    </div>
+  );
+}
+
+function StemsList({ record }: { record: Song['record'] }) {
+  const r = (record ?? {}) as RecordShape;
+  const stems = r.stems;
+  if (!stems || Object.keys(stems).length === 0) {
+    return (
+      <Muted>
+        No stems uploaded yet. Pipeline writes audio files to the <code>stems</code>{' '}
+        bucket and registers them in <code>record.stems</code>.
+      </Muted>
+    );
+  }
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      {Object.entries(stems).map(([track, storageKey]) => (
+        <div
+          key={track}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '120px 1fr',
+            gap: 12,
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: 'rgba(91,140,62,0.06)',
+            border: '1px solid rgba(91,140,62,0.2)',
+            fontSize: 12,
+          }}
+        >
+          <span
+            style={{
+              color: '#5B8C3E',
+              fontFamily: monoFont,
+              textTransform: 'uppercase',
+              fontSize: 10,
+              letterSpacing: '0.08em',
+              fontWeight: 600,
+            }}
+          >
+            {track}
+          </span>
+          <span
+            style={{
+              fontFamily: monoFont,
+              color: 'rgba(255,255,255,0.7)',
+              wordBreak: 'break-all',
+            }}
+          >
+            {storageKey}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
