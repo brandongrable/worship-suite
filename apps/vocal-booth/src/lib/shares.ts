@@ -27,28 +27,39 @@ export async function findUserIdByEmail(email: string): Promise<string | null> {
 
 /**
  * All shares for a given song, with the recipient's display_name
- * joined in. Only the song owner can read non-self rows (per the
- * song_shares_owner_manages policy), but the join still works for
- * the recipient's own row (song_shares_recipient_reads_own).
+ * joined in. Done as two queries because both `song_shares.user_id`
+ * and `profiles.id` reference `auth.users.id` independently — there's
+ * no direct FK between them for PostgREST to resource-embed against,
+ * so we fetch profiles separately and merge.
+ *
+ * Only the song owner can read non-self rows (per the
+ * `song_shares_owner_manages` policy); the recipient sees their own
+ * row via `song_shares_recipient_reads_own`. Both policies leave the
+ * profiles read open (`profiles_read_all`).
  */
 export async function listSharesForSong(songId: string): Promise<ShareWithRecipient[]> {
-  const { data, error } = await supabase
+  const { data: shareRows, error: shareErr } = await supabase
     .from('song_shares')
-    .select('*, profiles:user_id(display_name)')
+    .select('*')
     .eq('song_id', songId);
-  if (error) throw error;
-  return (data ?? []).map((row) => {
-    // PostgREST returns the joined profile as an object (FK is to a
-    // single profiles row). Be defensive against the array form.
-    const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
-    return {
-      ...row,
-      display_name:
-        profile && typeof profile === 'object' && 'display_name' in profile
-          ? ((profile as { display_name: string | null }).display_name ?? null)
-          : null,
-    } as ShareWithRecipient;
-  });
+  if (shareErr) throw shareErr;
+  const shares = shareRows ?? [];
+  if (shares.length === 0) return [];
+
+  const userIds = shares.map((s) => s.user_id);
+  const { data: profileRows, error: profileErr } = await supabase
+    .from('profiles')
+    .select('id, display_name')
+    .in('id', userIds);
+  if (profileErr) throw profileErr;
+
+  const nameById = new Map<string, string | null>();
+  for (const p of profileRows ?? []) nameById.set(p.id, p.display_name ?? null);
+
+  return shares.map((s) => ({
+    ...s,
+    display_name: nameById.get(s.user_id) ?? null,
+  }));
 }
 
 export async function addShare(
