@@ -41,6 +41,22 @@ export async function createSong(input: CreateSongInput, ownerId: string): Promi
   return data;
 }
 
+/**
+ * Look up a single song by id. RLS still filters server-side, so this
+ * returns null when the song doesn't exist or isn't visible to the
+ * current user (deleted, revoked share, etc.). Used by the restore-
+ * last-session path on app load.
+ */
+export async function fetchSongById(id: string): Promise<Song | null> {
+  const { data, error } = await supabase
+    .from('songs')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function deleteSong(id: string): Promise<void> {
   const { error } = await supabase.from('songs').delete().eq('id', id);
   if (error) throw error;

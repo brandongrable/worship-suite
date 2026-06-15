@@ -6,7 +6,8 @@ import Home from './Home';
 import Library from './Library';
 import SongDetail from './SongDetail';
 import WorshipMixer from './WorshipMixer.jsx';
-import type { Song } from './lib/songs';
+import { fetchSongById, type Song } from './lib/songs';
+import { loadPersistedState, savePersistedState } from './lib/session-state';
 
 type View = 'home' | 'mixer' | 'mixer-song' | 'library' | 'song';
 
@@ -17,16 +18,57 @@ export default function App() {
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    let cancelled = false;
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (cancelled) return;
       setSession(data.session);
-      setReady(true);
+      if (data.session) {
+        const persisted = loadPersistedState(data.session.user.id);
+        if (
+          persisted.selectedSongId &&
+          (persisted.view === 'song' || persisted.view === 'mixer-song')
+        ) {
+          try {
+            const song = await fetchSongById(persisted.selectedSongId);
+            if (cancelled) return;
+            if (song) {
+              setSelectedSong(song);
+              setView(persisted.view);
+            } else {
+              // Song was deleted / un-shared since last session.
+              setView('home');
+            }
+          } catch {
+            if (!cancelled) setView('home');
+          }
+        } else if (persisted.view !== 'home') {
+          setView(persisted.view);
+        }
+      }
+      if (!cancelled) setReady(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
       setSession(sess);
-      if (!sess) setView('home');
+      if (!sess) {
+        setView('home');
+        setSelectedSong(null);
+      }
     });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, []);
+
+  // Persist view + selected song id whenever they change. Per-user
+  // keying keeps multiple accounts on the same device separate.
+  useEffect(() => {
+    if (!session) return;
+    savePersistedState(session.user.id, {
+      view,
+      selectedSongId: selectedSong?.id ?? null,
+    });
+  }, [view, selectedSong?.id, session?.user.id]);
 
   if (!ready) {
     return (

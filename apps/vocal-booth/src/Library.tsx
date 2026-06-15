@@ -22,13 +22,17 @@ export default function Library({
 }) {
   const [songs, setSongs] = useState<Song[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function refresh() {
     setError(null);
+    setRefreshing(true);
     try {
       setSongs(await listMySongs());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -47,7 +51,7 @@ export default function Library({
       }}
     >
       <div style={{ maxWidth: 640, margin: '0 auto' }}>
-        <Header onBack={onBack} />
+        <Header onBack={onBack} onRefresh={refresh} refreshing={refreshing} />
 
         <NewSongForm ownerId={ownerId} onCreated={refresh} />
 
@@ -91,7 +95,15 @@ export default function Library({
   );
 }
 
-function Header({ onBack }: { onBack: () => void }) {
+function Header({
+  onBack,
+  onRefresh,
+  refreshing,
+}: {
+  onBack: () => void;
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
       <button
@@ -110,7 +122,23 @@ function Header({ onBack }: { onBack: () => void }) {
         ← Home
       </button>
       <h1 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>My Library</h1>
-      <div style={{ width: 70 }} />
+      <button
+        onClick={onRefresh}
+        disabled={refreshing}
+        style={{
+          background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          color: 'rgba(255,255,255,0.6)',
+          padding: '6px 12px',
+          borderRadius: 8,
+          fontSize: 12,
+          cursor: refreshing ? 'wait' : 'pointer',
+          fontFamily: monoFont,
+          width: 70,
+        }}
+      >
+        {refreshing ? '…' : '⟳ Refresh'}
+      </button>
     </div>
   );
 }
