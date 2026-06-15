@@ -14,13 +14,59 @@ type AlignerResult = {
   out_path: string;
 };
 
+type ReviewItem = {
+  kind: string; // 'low_confidence' | 'long_run' | ...
+  word: string;
+  word_index: number;
+  time_sec: number;
+  measure: number;
+  owned_notes: number;
+  score?: number;
+  note: string;
+};
+
+type ReviewSidecar = {
+  song?: string;
+  source_midi?: string;
+  source_json?: string;
+  output_musicxml?: string;
+  summary: {
+    notes_total: number;
+    words_total: number;
+    word_start_notes: number;
+    continuation_notes: number;
+    instrumental_notes: number;
+    measure_count: number;
+    tempo_bpm: number;
+    ticks_per_beat: number;
+    key_fifths: number;
+    beats_per_bar: number;
+    divisions: number;
+  };
+  items: ReviewItem[];
+  structure_check: unknown | null;
+};
+
 function deriveOutPath(midiPath: string): string {
-  // foo/bar/baz.mid → foo/bar/baz-aligned.musicxml
   const lastSep = Math.max(midiPath.lastIndexOf('/'), midiPath.lastIndexOf('\\'));
   const dir = lastSep >= 0 ? midiPath.slice(0, lastSep + 1) : '';
   const base = lastSep >= 0 ? midiPath.slice(lastSep + 1) : midiPath;
   const stem = base.replace(/\.(mid|midi)$/i, '');
   return dir + stem + '-aligned.musicxml';
+}
+
+function deriveReviewPath(musicxmlPath: string): string {
+  return musicxmlPath.replace(/\.musicxml$/i, '.review.json');
+}
+
+function fifthsToKey(fifths: number): string {
+  // Major-key spelling for the circle of fifths. Negative = flats.
+  const keys = [
+    'Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F',
+    'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#',
+  ];
+  const idx = fifths + 7;
+  return idx >= 0 && idx < keys.length ? keys[idx]! : `${fifths} fifths`;
 }
 
 export default function App() {
@@ -31,7 +77,6 @@ export default function App() {
   const [pythonChecking, setPythonChecking] = useState(false);
   const [pythonErr, setPythonErr] = useState<string | null>(null);
 
-  // Aligner stage state.
   const [alignerDir, setAlignerDir] = useState<string | null>(null);
   const [midi, setMidi] = useState<string | null>(null);
   const [json, setJson] = useState<string | null>(null);
@@ -39,6 +84,11 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AlignerResult | null>(null);
   const [runErr, setRunErr] = useState<string | null>(null);
+
+  const [review, setReview] = useState<ReviewSidecar | null>(null);
+  const [reviewPath, setReviewPath] = useState<string | null>(null);
+  const [reviewErr, setReviewErr] = useState<string | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
 
   useEffect(() => {
     invoke<Health>('health_check').then(setHealth).catch((e) => setHealthErr(String(e)));
@@ -93,11 +143,37 @@ export default function App() {
         outPath,
       });
       setResult(r);
+      if (r.success) {
+        loadReviewFromPath(deriveReviewPath(r.out_path));
+      }
     } catch (e) {
       setRunErr(String(e));
     } finally {
       setRunning(false);
     }
+  }
+
+  async function loadReviewFromPath(path: string) {
+    setReviewLoading(true);
+    setReviewErr(null);
+    setReviewPath(path);
+    try {
+      const data = await invoke<ReviewSidecar>('load_review', { path });
+      setReview(data);
+    } catch (e) {
+      setReview(null);
+      setReviewErr(String(e));
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  async function pickReviewFile() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Review JSON', extensions: ['json'] }],
+    });
+    if (typeof selected === 'string') loadReviewFromPath(selected);
   }
 
   async function revealOutput() {
@@ -126,14 +202,8 @@ export default function App() {
         {healthErr && <div className="error">Rust IPC error: {healthErr}</div>}
         {health ? (
           <ul className="kv">
-            <li>
-              <span className="k">IPC</span>
-              <span className="v">{health.ok ? 'connected' : 'down'}</span>
-            </li>
-            <li>
-              <span className="k">Rust</span>
-              <span className="v">{health.rust}</span>
-            </li>
+            <li><span className="k">IPC</span><span className="v">{health.ok ? 'connected' : 'down'}</span></li>
+            <li><span className="k">Rust</span><span className="v">{health.rust}</span></li>
           </ul>
         ) : !healthErr ? (
           <div className="muted">Pinging Rust…</div>
@@ -150,22 +220,9 @@ export default function App() {
         {pythonErr && <div className="error">IPC error: {pythonErr}</div>}
         {python && (
           <ul className="kv">
-            <li>
-              <span className="k">found</span>
-              <span className="v">{python.found ? 'yes' : 'no'}</span>
-            </li>
-            {python.version && (
-              <li>
-                <span className="k">version</span>
-                <span className="v">{python.version}</span>
-              </li>
-            )}
-            {python.error && (
-              <li>
-                <span className="k">error</span>
-                <span className="v error-text">{python.error}</span>
-              </li>
-            )}
+            <li><span className="k">found</span><span className="v">{python.found ? 'yes' : 'no'}</span></li>
+            {python.version && <li><span className="k">version</span><span className="v">{python.version}</span></li>}
+            {python.error && <li><span className="k">error</span><span className="v error-text">{python.error}</span></li>}
           </ul>
         )}
         {!python && !pythonErr && (
@@ -184,12 +241,7 @@ export default function App() {
         </div>
 
         <div className="picker-grid">
-          <PickerRow
-            label="aligner dir"
-            value={alignerDir}
-            onPick={pickAlignerDir}
-            disabled={running}
-          />
+          <PickerRow label="aligner dir" value={alignerDir} onPick={pickAlignerDir} disabled={running} />
           <PickerRow label="midi" value={midi} onPick={pickMidi} disabled={running} />
           <PickerRow label="json" value={json} onPick={pickJson} disabled={running} />
           <div className="picker-row">
@@ -215,14 +267,11 @@ export default function App() {
                 </span>
               </li>
               {result.success && (
-                <li>
-                  <span className="k">wrote</span>
-                  <span className="v path-cell">{result.out_path}</span>
-                </li>
+                <li><span className="k">wrote</span><span className="v path-cell">{result.out_path}</span></li>
               )}
             </ul>
             {result.stdout && (
-              <details open>
+              <details>
                 <summary>stdout ({result.stdout.length} chars)</summary>
                 <pre className="log">{result.stdout}</pre>
               </details>
@@ -234,18 +283,104 @@ export default function App() {
               </details>
             )}
             {result.success && (
-              <button
-                className="btn btn-ghost"
-                onClick={revealOutput}
-                style={{ marginTop: 10 }}
-              >
+              <button className="btn btn-ghost" onClick={revealOutput} style={{ marginTop: 10 }}>
                 Reveal output in Finder
               </button>
             )}
           </div>
         )}
       </section>
+
+      <section className="card">
+        <div className="card-head">
+          <h2>Review</h2>
+          <button className="btn btn-ghost" onClick={pickReviewFile} disabled={reviewLoading}>
+            {reviewLoading ? 'Loading…' : 'Load review file…'}
+          </button>
+        </div>
+
+        {reviewPath && (
+          <div className="picker-row" style={{ marginBottom: 12, gridTemplateColumns: '80px 1fr' }}>
+            <span className="k">file</span>
+            <span className="v path-cell">{reviewPath}</span>
+          </div>
+        )}
+
+        {reviewErr && <div className="error">{reviewErr}</div>}
+
+        {!review && !reviewErr && !reviewLoading && (
+          <div className="muted">
+            Run the aligner above, or pick a <code>.review.json</code> manually to inspect
+            flagged words.
+          </div>
+        )}
+
+        {review && (
+          <>
+            <SummaryGrid summary={review.summary} />
+            <FlagsList items={review.items} />
+          </>
+        )}
+      </section>
     </main>
+  );
+}
+
+function SummaryGrid({ summary }: { summary: ReviewSidecar['summary'] }) {
+  const cells: Array<[string, string]> = [
+    ['tempo', `${summary.tempo_bpm} BPM`],
+    ['key', `${fifthsToKey(summary.key_fifths)} (${summary.key_fifths >= 0 ? '+' : ''}${summary.key_fifths})`],
+    ['meter', `${summary.beats_per_bar}/4`],
+    ['measures', String(summary.measure_count)],
+    ['words', String(summary.words_total)],
+    ['notes', String(summary.notes_total)],
+    ['continuations', String(summary.continuation_notes)],
+    ['instrumental', String(summary.instrumental_notes)],
+  ];
+  return (
+    <div className="summary-grid">
+      {cells.map(([k, v]) => (
+        <div className="summary-cell" key={k}>
+          <div className="summary-k">{k}</div>
+          <div className="summary-v">{v}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FlagsList({ items }: { items: ReviewItem[] }) {
+  if (items.length === 0) {
+    return <div className="muted" style={{ marginTop: 12 }}>No flags. Clean alignment.</div>;
+  }
+  const byKind = items.reduce<Record<string, ReviewItem[]>>((acc, item) => {
+    (acc[item.kind] ??= []).push(item);
+    return acc;
+  }, {});
+  const kinds = Object.keys(byKind).sort();
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="flags-head">
+        <span>
+          {items.length} flag{items.length !== 1 ? 's' : ''}
+        </span>
+        <span className="muted">{kinds.map((k) => `${byKind[k]!.length} ${k}`).join(' · ')}</span>
+      </div>
+      <ul className="flags">
+        {items.map((item, i) => (
+          <li key={i} className="flag">
+            <span className={`flag-kind kind-${item.kind}`}>{item.kind.replace('_', ' ')}</span>
+            <span className="flag-word">{item.word.trim()}</span>
+            <span className="flag-meta">
+              m{item.measure} · {item.time_sec.toFixed(2)}s · {item.owned_notes} note
+              {item.owned_notes !== 1 ? 's' : ''}
+              {typeof item.score === 'number' && ` · score ${item.score.toFixed(2)}`}
+            </span>
+            <span className="flag-note muted">{item.note}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

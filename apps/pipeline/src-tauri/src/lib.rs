@@ -1,4 +1,6 @@
 use serde::Serialize;
+use serde_json::Value;
+use std::fs;
 use std::process::Command;
 
 #[derive(Serialize)]
@@ -101,6 +103,16 @@ fn run_aligner(
     })
 }
 
+/// Load and parse the sidecar review JSON the aligner emits next to
+/// the MusicXML output. We don't type-check the shape on the Rust
+/// side — TypeScript on the frontend has the authoritative schema and
+/// can evolve as the aligner does.
+#[tauri::command]
+fn load_review(path: String) -> Result<Value, String> {
+    let raw = fs::read_to_string(&path).map_err(|e| format!("read {}: {}", path, e))?;
+    serde_json::from_str(&raw).map_err(|e| format!("parse {}: {}", path, e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -109,7 +121,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             health_check,
             python_check,
-            run_aligner
+            run_aligner,
+            load_review
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

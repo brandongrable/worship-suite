@@ -204,6 +204,115 @@ summary {
   margin: 8px 0 0;
 }
 
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.summary-cell {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.summary-k {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  margin-bottom: 4px;
+}
+
+.summary-v {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+.flags-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 8px;
+}
+
+.flags {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 400px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.flag {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  grid-template-rows: auto auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+}
+
+.flag-kind {
+  grid-row: 1;
+  font-size: 9px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(155, 106, 216, 0.12);
+  color: #9B6AD8;
+  white-space: nowrap;
+}
+
+.kind-low_confidence {
+  background: rgba(217, 69, 69, 0.12);
+  color: #D94545;
+}
+
+.kind-long_run {
+  background: rgba(232, 200, 64, 0.12);
+  color: #E8C840;
+}
+
+.flag-word {
+  grid-row: 1;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'DM Sans', sans-serif;
+}
+
+.flag-meta {
+  grid-row: 1;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  color: rgba(255, 255, 255, 0.5);
+  justify-self: end;
+}
+
+.flag-note {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  font-size: 11px;
+}
+
 .kv {
   list-style: none;
   padding: 0;
