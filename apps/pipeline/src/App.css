@@ -70,6 +70,53 @@ body {
   font-family: 'JetBrains Mono', 'SF Mono', monospace;
 }
 
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-head h2 {
+  margin: 0;
+}
+
+.btn {
+  background: #9B6AD8;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: -apple-system, 'DM Sans', sans-serif;
+}
+
+.btn:hover:not(:disabled) {
+  background: #a779e0;
+}
+
+.btn:disabled {
+  background: rgba(155, 106, 216, 0.4);
+  cursor: wait;
+}
+
+code {
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.error-text {
+  color: #D94545 !important;
+  word-break: break-word;
+  text-align: right;
+  max-width: 60%;
+}
+
 .kv {
   list-style: none;
   padding: 0;
