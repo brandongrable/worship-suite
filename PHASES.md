@@ -98,7 +98,10 @@ Reloading drops the user back where they left off
 ⟳ button next to the title; surfaces freshly-published rows without a
 hard reload
 
-## Phase 4 — Sections + harmony parts  🔜 next
+## Phase 4 — Sections + harmony parts  🟡 mostly done
+
+Only 4.3 (PartLayer[] from aligner) remains. Everything else has
+shipped end-to-end.
 
 Real arrangement data lands so the mixer's section bar and part-status
 display work for actual songs.
@@ -107,14 +110,33 @@ display work for actual songs.
   `record.lyrics` when present. Normalizes via core's `sectionLabel` /
   `sectionShortLabel`. Sorted by `startTime` ascending. Old songs
   keep the synthetic "Full Song" fallback
-- 4.2 📋 — Pipeline parses MusicXML rehearsal marks (or accepts a
-  structure map) and writes `sections: Section[]` into `songs.record`
+- 4.2 ✅ — End-to-end automated section authoring:
+    * **4.2a (aligner repo)** — `structure.compute_timings(structure,
+      alignment, notes)` walks the literal performance order and
+      emits one timed entry per section instance. Vocal sections
+      anchored to first/last owned word; instrumental sections
+      sandwiched between adjacent vocal windows with leading/trailing
+      clamps. Sidecar JSON gains a `sections` field; null when no
+      structure map was provided.
+    * **4.2b (Pipeline / this repo)** — `publish_song` normalizes the
+      raw aligner timings into core's `Section[]` shape (id, type,
+      instanceNumber, startTime, endTime, partStatus). Per-type
+      instance counter assigns VERSE/1, VERSE/2 across `verse 1` +
+      `verse 1 (repeat)` automatically. Raw timings preserved on
+      `record.section_timings_raw` for debugging.
+    * **4.2c (interim)** — `SectionsPanel` in SongDetail lets an
+      owner author or edit sections by hand. Owners can fix mis-
+      classified types or fill in `partStatus` (the producer side
+      always emits all-inactive; harmony arrangement is the owner's
+      authoring concern).
 - 4.3 📋 — Pipeline writes `parts: PartLayer[]` from the aligner output
-- 4.4 📋 — Vocal Booth mixer renders real section boundaries + real
-  part-status (already wired adapter-side from 4.1; just needs real
-  producer-side data to verify visually)
-- 4.5 📋 — Pipeline batch-upload for the 7-track stem set (click,
-  band, lead + 4 harmonies) instead of one at a time
+- 4.4 ✅ — Vocal Booth mixer renders real section boundaries via the
+  4.1 adapter; verified with 4.2 producer output. Real part-status
+  flows when authored via 4.2c.
+- 4.5 ✅ — Multi-file stem upload in Vocal Booth (Pipeline batch
+  upload deferred to a Pipeline-only slice). `guessTrackFromFilename`
+  + `uploadStemsBatch` do parallel storage PUTs followed by ONE
+  record patch — six TGIF stems land in one round-trip.
 
 ## Phase 5 — Charter persistence  ✅ done
 
