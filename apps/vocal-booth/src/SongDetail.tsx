@@ -34,13 +34,16 @@ export default function SongDetail({
   song,
   ownedByMe,
   onBack,
+  onOpenMixer,
 }: {
   song: Song;
   ownedByMe: boolean;
   onBack: () => void;
+  onOpenMixer: () => void;
 }) {
   const created = new Date(song.created_at).toLocaleString();
   const updated = new Date(song.updated_at).toLocaleString();
+  const stemCount = Object.keys(((song.record ?? {}) as RecordShape).stems ?? {}).length;
 
   return (
     <div
@@ -96,10 +99,34 @@ export default function SongDetail({
               fontSize: 13,
               color: 'rgba(255,255,255,0.5)',
               fontFamily: monoFont,
+              marginBottom: 16,
             }}
           >
             {song.key} · {song.bpm} bpm · {song.lead_gender} lead · {song.visibility}
           </div>
+          <button
+            onClick={onOpenMixer}
+            disabled={stemCount === 0}
+            style={{
+              padding: '10px 20px',
+              borderRadius: 8,
+              border: 'none',
+              background:
+                stemCount > 0
+                  ? 'linear-gradient(135deg, #E8C840, #D94545)'
+                  : 'rgba(255,255,255,0.06)',
+              color: stemCount > 0 ? '#fff' : 'rgba(255,255,255,0.3)',
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: stemCount > 0 ? 'pointer' : 'not-allowed',
+              fontFamily: sansFont,
+              boxShadow: stemCount > 0 ? '0 4px 20px rgba(232,200,64,0.25)' : 'none',
+            }}
+          >
+            {stemCount > 0
+              ? `▶ Open in Mixer (${stemCount} stem${stemCount === 1 ? '' : 's'})`
+              : '▶ Open in Mixer · no stems yet'}
+          </button>
         </div>
 
         <SectionLabel>Record</SectionLabel>

@@ -8,7 +8,7 @@ import SongDetail from './SongDetail';
 import WorshipMixer from './WorshipMixer.jsx';
 import type { Song } from './lib/songs';
 
-type View = 'home' | 'mixer' | 'library' | 'song';
+type View = 'home' | 'mixer' | 'mixer-song' | 'library' | 'song';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -59,6 +59,15 @@ export default function App() {
     );
   }
 
+  if (view === 'mixer-song' && selectedSong) {
+    return (
+      <WorshipMixer
+        initialSong={selectedSong}
+        onExit={() => setView('song')}
+      />
+    );
+  }
+
   if (view === 'library') {
     return (
       <Library
@@ -81,6 +90,7 @@ export default function App() {
           setSelectedSong(null);
           setView('library');
         }}
+        onOpenMixer={() => setView('mixer-song')}
       />
     );
   }

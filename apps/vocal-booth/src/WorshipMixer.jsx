@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { getKeyOptions, formatTime } from "@worship/core";
+import { supabase } from "./lib/supabase";
+import { songToMixerSong } from "./lib/mixer-adapter";
 
 /* ── Color System ── */
 const PART_COLORS = { soprano: "#E8C840", alto: "#D94545", tenor: "#4FBCD0", baritone: "#5B8C3E" };
@@ -809,11 +811,23 @@ function StemLoader({ song, onLoadStem, loadedTracks, loading, onReady }) {
 /* ═══════════════════════════════════════════════ */
 /* ── Main App ── */
 /* ═══════════════════════════════════════════════ */
-export default function WorshipMixer() {
-  const [phase, setPhase] = useState("home"); // "home" | "setlist" | "load" | "mixer"
+/**
+ * @param {{
+ *   initialSong?: import('./lib/songs').Song | null,
+ *   onExit?: (() => void) | null,
+ * }} props
+ */
+export default function WorshipMixer({ initialSong = null, onExit = null }) {
+  // Phases: "home" | "library" | "setlist" | "load" | "mixer" | "loading-remote"
+  // When `initialSong` is set we skip the prototype's home/library demo
+  // screens entirely and jump straight to "loading-remote", which
+  // signs URLs for the song's stems and decodes them before showing
+  // the mixer surface.
+  const [phase, setPhase] = useState(initialSong ? "loading-remote" : "home");
   const [selectedSetlist, setSelectedSetlist] = useState(null);
   const [selectedSongEntry, setSelectedSongEntry] = useState(null);
   const [selectedSong, setSelectedSong] = useState(null);
+  const [remoteError, setRemoteError] = useState(null);
   const [myPart, setMyPart] = useState("alto");
   const [activePreset, setActivePreset] = useState("all");
   const [keyOffset, setKeyOffset] = useState(0);
@@ -877,6 +891,51 @@ export default function WorshipMixer() {
     }
   }, [activeSection, queuedSection, engine.isPlaying]);
 
+  // When opened with a published song row, sign URLs for the stem
+  // manifest, decode each stem, then build the mixer-shape song and
+  // advance to the mixer. Duration comes from the first decoded
+  // buffer because no `duration` column exists on `songs` yet.
+  useEffect(() => {
+    if (!initialSong || selectedSong) return;
+    let cancelled = false;
+    (async () => {
+      const stems = initialSong.record?.stems ?? {};
+      const entries = Object.entries(stems);
+      if (entries.length === 0) {
+        setRemoteError("No stems uploaded for this song yet.");
+        return;
+      }
+      const paths = entries.map(([, key]) => key.replace(/^stems\//, ""));
+      const { data, error } = await supabase.storage
+        .from("stems")
+        .createSignedUrls(paths, 3600);
+      if (cancelled) return;
+      if (error || !data) {
+        setRemoteError(error?.message || "Failed to sign stem URLs.");
+        return;
+      }
+      const buffers = await Promise.all(
+        entries.map(([trackId, key], i) => {
+          const signed = data[i]?.signedUrl;
+          if (!signed) return Promise.resolve(null);
+          return engine.loadStem(trackId, {
+            url: signed,
+            label: key.split("/").pop() || trackId,
+          });
+        })
+      );
+      if (cancelled) return;
+      const firstBuf = buffers.find((b) => b != null);
+      if (!firstBuf) {
+        setRemoteError("Could not decode any stems.");
+        return;
+      }
+      setSelectedSong(songToMixerSong(initialSong, firstBuf.duration));
+      setPhase("mixer");
+    })();
+    return () => { cancelled = true; };
+  }, [initialSong, selectedSong, engine.loadStem]);
+
   const handleSelectSetlist = (sl) => { setSelectedSetlist(sl); setPhase("setlist"); };
   const handleSelectSong = (entry, lib) => {
     if (!entry.stemsAvailable) return;
@@ -902,6 +961,9 @@ export default function WorshipMixer() {
   };
 
   const navBack = () => {
+    // When opened from a song row there's no prototype stem-picker to
+    // fall back to — bounce all the way out to the parent (SongDetail).
+    if (initialSong && onExit) { engine.pause(); onExit(); return; }
     if (phase === "mixer") { engine.pause(); setPhase("load"); }
     else if (phase === "load" && selectedSetlist) { setPhase("setlist"); }
     else if (phase === "load" && !selectedSetlist) { setPhase("library"); }
@@ -909,7 +971,13 @@ export default function WorshipMixer() {
     else if (phase === "library") { setPhase("home"); }
   };
 
-  const backLabel = phase === "mixer" ? "‹ Stems" : phase === "load" ? (selectedSetlist ? "‹ Setlist" : "‹ Library") : phase === "setlist" ? "‹ Home" : phase === "library" ? "‹ Home" : null;
+  const backLabel = initialSong
+    ? "‹ Song"
+    : phase === "mixer" ? "‹ Stems"
+    : phase === "load" ? (selectedSetlist ? "‹ Setlist" : "‹ Library")
+    : phase === "setlist" ? "‹ Home"
+    : phase === "library" ? "‹ Home"
+    : null;
   const keyOptions = useMemo(() => activeSong ? getKeyOptions(activeSong.originalKey) : [], [activeSong]);
 
   return (
@@ -932,6 +1000,25 @@ export default function WorshipMixer() {
       </div>
 
       {/* Screens */}
+      {phase === "loading-remote" && (
+        <div style={{ padding: "60px 20px", textAlign: "center" }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", margin: "0 0 8px", fontFamily: "'DM Sans', sans-serif" }}>{initialSong?.title}</h2>
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", margin: "0 0 24px", fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>{initialSong?.key} · {initialSong?.bpm} BPM</p>
+          {remoteError ? (
+            <div style={{ padding: 16, borderRadius: 8, background: "rgba(217,69,69,0.08)", border: "1px solid rgba(217,69,69,0.3)", color: "#D94545", fontSize: 12, fontFamily: "'JetBrains Mono', 'SF Mono', monospace" }}>
+              {remoteError}
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontFamily: "'JetBrains Mono', 'SF Mono', monospace", letterSpacing: "0.08em", marginBottom: 12 }}>DECODING STEMS…</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", fontFamily: "'DM Sans', sans-serif" }}>
+                {Object.keys(engine.loadedTracks).length} of {Object.keys(initialSong?.record?.stems ?? {}).length} ready
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {phase === "home" && <SetlistHome setlists={SETLISTS} onSelectSetlist={handleSelectSetlist} onOpenLibrary={() => setPhase("library")} />}
 
       {phase === "library" && <SongLibrary onBack={navBack} onSelectSong={(song) => {
