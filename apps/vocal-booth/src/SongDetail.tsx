@@ -1,9 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Song } from './lib/songs';
+import { removeStem, uploadAndRegisterStem } from './lib/songs';
 import { supabase } from './lib/supabase';
 
 const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 const sansFont = "'DM Sans', sans-serif";
+
+// Track slots that map 1:1 to mixer channels. Order matches the
+// mixer's TRACKS array so uploads and playback line up visually.
+const TRACK_SLOTS: { id: string; label: string; color: string }[] = [
+  { id: 'click', label: 'Click', color: '#8A8A8A' },
+  { id: 'band', label: 'Band', color: '#4A9EE5' },
+  { id: 'lead', label: 'Lead', color: '#5BB8D4' },
+  { id: 'soprano', label: 'Soprano', color: '#E8C840' },
+  { id: 'alto', label: 'Alto', color: '#D94545' },
+  { id: 'tenor', label: 'Tenor', color: '#4FBCD0' },
+  { id: 'baritone', label: 'Baritone', color: '#5B8C3E' },
+];
 
 type RecordSummary = {
   notes_total?: number;
@@ -31,19 +44,33 @@ type RecordShape = {
 };
 
 export default function SongDetail({
-  song,
+  song: songProp,
   ownedByMe,
   onBack,
   onOpenMixer,
+  onUpdated,
 }: {
   song: Song;
   ownedByMe: boolean;
   onBack: () => void;
   onOpenMixer: () => void;
+  onUpdated: (next: Song) => void;
 }) {
+  // Local copy so stem uploads/removals reflect immediately without
+  // waiting for the parent to round-trip a refetch. The parent is
+  // notified via onUpdated so it stays in sync (the mixer route reads
+  // App's selectedSong, which must include freshly uploaded stems).
+  const [song, setSong] = useState<Song>(songProp);
+  useEffect(() => { setSong(songProp); }, [songProp.id]);
+
   const created = new Date(song.created_at).toLocaleString();
   const updated = new Date(song.updated_at).toLocaleString();
   const stemCount = Object.keys(((song.record ?? {}) as RecordShape).stems ?? {}).length;
+
+  function handleSongUpdate(next: Song) {
+    setSong(next);
+    onUpdated(next);
+  }
 
   return (
     <div
@@ -144,7 +171,11 @@ export default function SongDetail({
         <PipelinePayload record={song.record} />
 
         <SectionLabel>Stems</SectionLabel>
-        <StemsList record={song.record} />
+        <StemsPanel
+          song={song}
+          ownedByMe={ownedByMe}
+          onUpdated={handleSongUpdate}
+        />
 
         <SectionLabel>Sections</SectionLabel>
         <Muted>
@@ -156,43 +187,46 @@ export default function SongDetail({
   );
 }
 
-function StemsList({ record }: { record: Song['record'] }) {
-  const r = (record ?? {}) as RecordShape;
-  const stems = r.stems;
-
+function StemsPanel({
+  song,
+  ownedByMe,
+  onUpdated,
+}: {
+  song: Song;
+  ownedByMe: boolean;
+  onUpdated: (next: Song) => void;
+}) {
+  const stems = (((song.record ?? {}) as RecordShape).stems ?? {}) as Record<
+    string,
+    string
+  >;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
-  const [loading, setLoading] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
-      // Stop any audio when leaving the page.
       audioRef.current?.pause();
       audioRef.current = null;
     };
   }, []);
 
-  async function play(track: string, storageKey: string) {
+  async function preview(track: string, storageKey: string) {
     setErr(null);
-
-    // Toggle off if this track is the one playing.
     if (playing === track) {
       audioRef.current?.pause();
       setPlaying(null);
       return;
     }
-
-    setLoading(track);
+    setPreviewLoading(track);
     try {
-      // Storage key is "stems/<song_id>/<track>.<ext>". The bucket
-      // create-signed-url API wants the path WITHIN the bucket.
       const objectPath = storageKey.replace(/^stems\//, '');
       const { data, error } = await supabase.storage
         .from('stems')
         .createSignedUrl(objectPath, 3600);
       if (error) throw error;
-
       audioRef.current?.pause();
       const audio = new Audio(data.signedUrl);
       audio.onended = () => setPlaying(null);
@@ -207,18 +241,45 @@ function StemsList({ record }: { record: Song['record'] }) {
       setErr(e instanceof Error ? e.message : String(e));
       setPlaying(null);
     } finally {
-      setLoading(null);
+      setPreviewLoading(null);
     }
   }
 
-  if (!stems || Object.keys(stems).length === 0) {
-    return (
-      <Muted>
-        No stems uploaded yet. Pipeline writes audio files to the <code>stems</code>{' '}
-        bucket and registers them in <code>record.stems</code>.
-      </Muted>
-    );
+  async function upload(track: string, file: File) {
+    setErr(null);
+    setBusy(track);
+    try {
+      const next = await uploadAndRegisterStem(song, track, file);
+      onUpdated(next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
   }
+
+  async function remove(track: string) {
+    if (!confirm(`Remove "${track}" stem? This deletes the file from Storage.`)) return;
+    setErr(null);
+    setBusy(track);
+    if (playing === track) {
+      audioRef.current?.pause();
+      setPlaying(null);
+    }
+    try {
+      const next = await removeStem(song, track);
+      onUpdated(next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (!ownedByMe && Object.keys(stems).length === 0) {
+    return <Muted>No stems uploaded yet.</Muted>;
+  }
+
   return (
     <div style={{ display: 'grid', gap: 6 }}>
       {err && (
@@ -236,74 +297,152 @@ function StemsList({ record }: { record: Song['record'] }) {
           {err}
         </div>
       )}
-      {Object.entries(stems).map(([track, storageKey]) => {
-        const isPlaying = playing === track;
-        const isLoading = loading === track;
+      {TRACK_SLOTS.map((slot) => {
+        const storageKey = stems[slot.id];
+        const isPlaying = playing === slot.id;
+        const isPreviewLoading = previewLoading === slot.id;
+        const isBusy = busy === slot.id;
+        const loaded = !!storageKey;
+
+        // Non-owners only see populated slots, and read-only.
+        if (!ownedByMe && !loaded) return null;
+
         return (
           <div
-            key={track}
+            key={slot.id}
             style={{
               display: 'grid',
-              gridTemplateColumns: '90px 1fr auto',
+              gridTemplateColumns: '110px 1fr auto',
               gap: 12,
               alignItems: 'center',
-              padding: '8px 12px',
-              borderRadius: 6,
-              background: isPlaying
-                ? 'rgba(155,106,216,0.08)'
-                : 'rgba(91,140,62,0.06)',
-              border: isPlaying
-                ? '1px solid rgba(155,106,216,0.4)'
-                : '1px solid rgba(91,140,62,0.2)',
+              padding: '10px 12px',
+              borderRadius: 8,
+              background: loaded
+                ? `${slot.color}0a`
+                : 'rgba(255,255,255,0.02)',
+              border: loaded
+                ? `1px solid ${slot.color}55`
+                : '1px dashed rgba(255,255,255,0.1)',
               fontSize: 12,
-              transition: 'background 0.15s, border-color 0.15s',
             }}
           >
             <span
               style={{
-                color: isPlaying ? '#9B6AD8' : '#5B8C3E',
+                color: loaded ? slot.color : 'rgba(255,255,255,0.4)',
                 fontFamily: monoFont,
                 textTransform: 'uppercase',
                 fontSize: 10,
                 letterSpacing: '0.08em',
-                fontWeight: 600,
+                fontWeight: 700,
               }}
             >
-              {track}
+              {slot.label}
             </span>
+
             <span
               style={{
                 fontFamily: monoFont,
                 color: 'rgba(255,255,255,0.6)',
+                fontSize: 11,
                 wordBreak: 'break-all',
-                fontSize: 11,
               }}
             >
-              {storageKey}
+              {isBusy
+                ? 'Working…'
+                : loaded
+                  ? storageKey.split('/').pop()
+                  : ownedByMe
+                    ? 'No file — pick one below'
+                    : '—'}
             </span>
-            <button
-              onClick={() => play(track, storageKey)}
-              disabled={isLoading}
-              style={{
-                background: isPlaying ? '#9B6AD8' : 'transparent',
-                border: `1px solid ${isPlaying ? '#9B6AD8' : 'rgba(255,255,255,0.15)'}`,
-                color: isPlaying ? '#fff' : 'rgba(255,255,255,0.7)',
-                padding: '4px 12px',
-                borderRadius: 4,
-                fontSize: 11,
-                fontFamily: monoFont,
-                cursor: isLoading ? 'wait' : 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              {isLoading ? '…' : isPlaying ? '◼ Stop' : '▶ Play'}
-            </button>
+
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {loaded && (
+                <button
+                  onClick={() => preview(slot.id, storageKey)}
+                  disabled={isPreviewLoading || isBusy}
+                  style={btnPrimary(isPlaying ? '#9B6AD8' : 'transparent', isPlaying ? '#9B6AD8' : 'rgba(255,255,255,0.15)', isPlaying ? '#fff' : 'rgba(255,255,255,0.75)')}
+                >
+                  {isPreviewLoading ? '…' : isPlaying ? '◼' : '▶'}
+                </button>
+              )}
+              {ownedByMe && (
+                <>
+                  <label style={btnLabel(isBusy)}>
+                    {loaded ? 'Replace' : 'Upload'}
+                    <input
+                      type="file"
+                      accept=".mp3,.wav,.ogg,.flac,.m4a,.aac"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) upload(slot.id, f);
+                        e.target.value = '';
+                      }}
+                      disabled={isBusy}
+                    />
+                  </label>
+                  {loaded && (
+                    <button
+                      onClick={() => remove(slot.id)}
+                      disabled={isBusy}
+                      style={btnDanger}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         );
       })}
     </div>
   );
 }
+
+function btnPrimary(bg: string, border: string, color: string): React.CSSProperties {
+  return {
+    background: bg,
+    border: `1px solid ${border}`,
+    color,
+    padding: '4px 10px',
+    borderRadius: 4,
+    fontSize: 11,
+    fontFamily: monoFont,
+    fontWeight: 600,
+    cursor: 'pointer',
+    minWidth: 30,
+  };
+}
+
+function btnLabel(busy: boolean): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    background: busy ? 'rgba(255,255,255,0.04)' : 'rgba(232,200,64,0.1)',
+    border: busy ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(232,200,64,0.3)',
+    color: busy ? 'rgba(255,255,255,0.4)' : '#E8C840',
+    padding: '4px 10px',
+    borderRadius: 4,
+    fontSize: 11,
+    fontFamily: monoFont,
+    fontWeight: 600,
+    cursor: busy ? 'wait' : 'pointer',
+  };
+}
+
+const btnDanger: React.CSSProperties = {
+  background: 'transparent',
+  border: '1px solid rgba(217,69,69,0.3)',
+  color: '#D94545',
+  padding: '4px 8px',
+  borderRadius: 4,
+  fontSize: 11,
+  fontFamily: monoFont,
+  fontWeight: 600,
+  cursor: 'pointer',
+};
 
 function PipelinePayload({ record }: { record: Song['record'] }) {
   const r = (record ?? {}) as RecordShape;

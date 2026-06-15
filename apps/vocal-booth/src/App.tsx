@@ -91,6 +91,7 @@ export default function App() {
           setView('library');
         }}
         onOpenMixer={() => setView('mixer-song')}
+        onUpdated={(next) => setSelectedSong(next)}
       />
     );
   }
