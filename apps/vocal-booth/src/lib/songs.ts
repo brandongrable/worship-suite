@@ -111,6 +111,114 @@ export async function uploadAndRegisterStem(
   return data;
 }
 
+export type StemUploadAttempt = {
+  track: string;
+  file: File;
+};
+
+export type StemUploadOutcome =
+  | { track: string; file: File; ok: true; storageKey: string }
+  | { track: string; file: File; ok: false; error: string };
+
+/**
+ * Best-effort guess of which stem slot a given filename belongs to,
+ * based on case-insensitive substring matches. Returns null if no
+ * confident match. Order matters — multi-word forms first so
+ * "Lead Vocal.mp3" lands as `lead` (not as something matching
+ * "vocal" against another slot), and "Sop (Melody)" matches
+ * `soprano` (not `lead`).
+ */
+export function guessTrackFromFilename(filename: string): string | null {
+  const base = filename
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, '');
+  if (base.includes('click') || base.includes('cuet') || base.includes('cue ')) {
+    return 'click';
+  }
+  // Harmony parts before "lead/vocal" so "Soprano (Melody Vocal)"
+  // resolves to soprano, not lead.
+  if (base.includes('sopran') || /(?:^|[^a-z])sop(?:$|[^a-z])/.test(base)) {
+    return 'soprano';
+  }
+  if (base.includes('alto')) return 'alto';
+  if (base.includes('tenor') || /(?:^|[^a-z])ten(?:$|[^a-z])/.test(base)) {
+    return 'tenor';
+  }
+  if (base.includes('baritone') || base.includes('bariton')) return 'baritone';
+  if (base.includes('lead') || base.includes('vocal') || base.includes('melody')) {
+    return 'lead';
+  }
+  if (base.includes('band') || base.includes('instrument')) return 'band';
+  return null;
+}
+
+/**
+ * Upload many stems in one pass: parallel storage PUTs, then a SINGLE
+ * patch to `songs.record.stems` so concurrent uploads don't clobber
+ * each other (the per-file `uploadAndRegisterStem` does read-modify-
+ * write on `record` and would lose stems if called in parallel).
+ *
+ * Returns one outcome per attempted upload, plus the updated row (or
+ * null if every upload failed and no patch was applied).
+ */
+export async function uploadStemsBatch(
+  song: Song,
+  attempts: StemUploadAttempt[],
+): Promise<{ outcomes: StemUploadOutcome[]; song: Song | null }> {
+  if (attempts.length === 0) return { outcomes: [], song: null };
+
+  const outcomes = await Promise.all(
+    attempts.map(async ({ track, file }): Promise<StemUploadOutcome> => {
+      const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
+      if (!AUDIO_EXT_ALLOWLIST.includes(ext as (typeof AUDIO_EXT_ALLOWLIST)[number])) {
+        return { track, file, ok: false, error: `Unsupported extension .${ext}` };
+      }
+      const objectPath = `${song.id}/${track}.${ext}`;
+      const { error } = await supabase.storage
+        .from('stems')
+        .upload(objectPath, file, {
+          upsert: true,
+          contentType: file.type || `audio/${ext}`,
+        });
+      if (error) {
+        return { track, file, ok: false, error: error.message };
+      }
+      return { track, file, ok: true, storageKey: `stems/${objectPath}` };
+    }),
+  );
+
+  const successful = outcomes.filter(
+    (o): o is Extract<StemUploadOutcome, { ok: true }> => o.ok,
+  );
+  if (successful.length === 0) return { outcomes, song: null };
+
+  const existing = (song.record ?? {}) as Record<string, unknown>;
+  const existingStems = (existing.stems ?? {}) as Record<string, string>;
+  const nextStems = { ...existingStems };
+  for (const ok of successful) {
+    nextStems[ok.track] = ok.storageKey;
+  }
+  const nextRecord = { ...existing, stems: nextStems } as unknown as Song['record'];
+
+  const { data, error } = await supabase
+    .from('songs')
+    .update({ record: nextRecord })
+    .eq('id', song.id)
+    .select()
+    .single();
+  if (error) {
+    // Storage uploads succeeded but the patch failed; mark them
+    // failed so the caller knows the manifest is out of sync.
+    return {
+      outcomes: outcomes.map((o) =>
+        o.ok ? { ...o, ok: false as const, error: `record patch failed: ${error.message}` } : o,
+      ),
+      song: null,
+    };
+  }
+  return { outcomes, song: data };
+}
+
 /**
  * Patch the song's sections array under `record.sections`. Used by
  * the SongDetail SectionsPanel when an owner authors sections by

@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Song } from './lib/songs';
-import { removeStem, uploadAndRegisterStem } from './lib/songs';
+import type { Song, StemUploadOutcome } from './lib/songs';
+import {
+  guessTrackFromFilename,
+  removeStem,
+  uploadAndRegisterStem,
+  uploadStemsBatch,
+} from './lib/songs';
 import {
   addShare,
   findUserIdByEmail,
@@ -217,6 +222,8 @@ function StemsPanel({
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [batchUploading, setBatchUploading] = useState(false);
+  const [batchResult, setBatchResult] = useState<StemUploadOutcome[] | null>(null);
 
   useEffect(() => {
     return () => {
@@ -270,6 +277,62 @@ function StemsPanel({
     }
   }
 
+  async function uploadMultiple(files: FileList) {
+    setErr(null);
+    setBatchResult(null);
+    const attempts: { track: string; file: File }[] = [];
+    const skipped: string[] = [];
+    const collisions: Record<string, number> = {};
+
+    for (const file of Array.from(files)) {
+      const guess = guessTrackFromFilename(file.name);
+      if (!guess) {
+        skipped.push(file.name);
+        continue;
+      }
+      // Disambiguate when two files map to the same slot — keep the
+      // first, skip the rest. Better than silent overwrite within a
+      // single batch (and rarer than auto-mapping success).
+      if (collisions[guess]) {
+        skipped.push(`${file.name} (slot "${guess}" already used by this batch)`);
+        continue;
+      }
+      collisions[guess] = 1;
+      attempts.push({ track: guess, file });
+    }
+
+    if (attempts.length === 0) {
+      setErr(
+        skipped.length > 0
+          ? `Couldn't infer a slot for any file. Rename to include a track keyword (click/band/lead/soprano/alto/tenor/baritone). Skipped: ${skipped.join(', ')}`
+          : 'No files selected.',
+      );
+      return;
+    }
+
+    setBatchUploading(true);
+    try {
+      const { outcomes, song: next } = await uploadStemsBatch(song, attempts);
+      const surfaced: StemUploadOutcome[] = [
+        ...outcomes,
+        ...skipped.map(
+          (name): StemUploadOutcome => ({
+            track: '—',
+            file: new File([], name),
+            ok: false,
+            error: 'no slot match',
+          }),
+        ),
+      ];
+      setBatchResult(surfaced);
+      if (next) onUpdated(next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBatchUploading(false);
+    }
+  }
+
   async function remove(track: string) {
     if (!confirm(`Remove "${track}" stem? This deletes the file from Storage.`)) return;
     setErr(null);
@@ -309,6 +372,96 @@ function StemsPanel({
           {err}
         </div>
       )}
+
+      {ownedByMe && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '8px 12px',
+            borderRadius: 8,
+            background: 'rgba(232,200,64,0.04)',
+            border: '1px dashed rgba(232,200,64,0.25)',
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.65)',
+            fontFamily: monoFont,
+          }}
+        >
+          <span>📁 Upload many at once — slot is inferred from filename</span>
+          <div style={{ flex: 1 }} />
+          <label style={btnLabel(batchUploading)}>
+            {batchUploading ? 'Uploading…' : 'Pick files'}
+            <input
+              type="file"
+              multiple
+              accept=".mp3,.wav,.ogg,.flac,.m4a,.aac"
+              style={{ display: 'none' }}
+              disabled={batchUploading}
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  uploadMultiple(e.target.files);
+                }
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </div>
+      )}
+
+      {batchResult && (
+        <div
+          style={{
+            display: 'grid',
+            gap: 4,
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: 'rgba(155,106,216,0.05)',
+            border: '1px solid rgba(155,106,216,0.25)',
+            fontSize: 11,
+            fontFamily: monoFont,
+          }}
+        >
+          <div style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 2 }}>
+            Batch result:
+          </div>
+          {batchResult.map((r, i) => (
+            <div
+              key={`${r.track}_${i}`}
+              style={{
+                display: 'flex',
+                gap: 8,
+                color: r.ok ? '#5B8C3E' : '#D94545',
+              }}
+            >
+              <span style={{ width: 14 }}>{r.ok ? '✓' : '✕'}</span>
+              <span style={{ width: 80 }}>{r.track}</span>
+              <span style={{ flex: 1, wordBreak: 'break-all' }}>
+                {r.file.name}
+              </span>
+              {!r.ok && <span style={{ flex: '0 0 auto' }}>{r.error}</span>}
+            </div>
+          ))}
+          <button
+            onClick={() => setBatchResult(null)}
+            style={{
+              alignSelf: 'flex-end',
+              marginTop: 4,
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: 'rgba(255,255,255,0.4)',
+              padding: '2px 8px',
+              borderRadius: 4,
+              fontSize: 10,
+              cursor: 'pointer',
+              fontFamily: monoFont,
+            }}
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+
       {TRACK_SLOTS.map((slot) => {
         const storageKey = stems[slot.id];
         const isPlaying = playing === slot.id;
