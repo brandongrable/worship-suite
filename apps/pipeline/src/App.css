@@ -313,6 +313,68 @@ summary {
   font-size: 11px;
 }
 
+.picker-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-mini {
+  padding: 4px 6px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.struct-check {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid;
+}
+
+.struct-ok {
+  background: rgba(91, 140, 62, 0.08);
+  border-color: rgba(91, 140, 62, 0.3);
+}
+
+.struct-fail {
+  background: rgba(217, 69, 69, 0.08);
+  border-color: rgba(217, 69, 69, 0.3);
+}
+
+.struct-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.struct-badge {
+  font-size: 10px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.struct-ok .struct-badge {
+  color: #5B8C3E;
+}
+
+.struct-fail .struct-badge {
+  color: #D94545;
+}
+
+.struct-msg {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.struct-suspect {
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
 .kv {
   list-style: none;
   padding: 0;

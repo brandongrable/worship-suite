@@ -74,23 +74,29 @@ struct AlignerResult {
 /// Run the lyric-midi aligner as a Python subprocess.
 ///
 /// Invokes `python3 -m aligner <midi_path> <json_path> -o <out_path>`
-/// with cwd set to `aligner_dir`. Captures stdout, stderr, and the exit
-/// code in one shot — no streaming yet; that's the next slice.
+/// (plus `-s <structure_path>` when provided) with cwd set to
+/// `aligner_dir`. Captures stdout, stderr, and the exit code in one
+/// shot — no streaming yet; that's the next slice.
 #[tauri::command]
 fn run_aligner(
     aligner_dir: String,
     midi_path: String,
     json_path: String,
     out_path: String,
+    structure_path: Option<String>,
 ) -> Result<AlignerResult, String> {
-    let output = Command::new("python3")
-        .arg("-m")
+    let mut cmd = Command::new("python3");
+    cmd.arg("-m")
         .arg("aligner")
         .arg(&midi_path)
         .arg(&json_path)
         .arg("-o")
         .arg(&out_path)
-        .current_dir(&aligner_dir)
+        .current_dir(&aligner_dir);
+    if let Some(s) = structure_path.as_ref().filter(|s| !s.is_empty()) {
+        cmd.arg("-s").arg(s);
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("failed to spawn python3: {}", e))?;
 

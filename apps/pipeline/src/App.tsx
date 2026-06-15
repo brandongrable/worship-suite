@@ -44,7 +44,17 @@ type ReviewSidecar = {
     divisions: number;
   };
   items: ReviewItem[];
-  structure_check: unknown | null;
+  structure_check: StructureCheck | null;
+};
+
+type StructureCheck = {
+  ok: boolean;
+  message: string;
+  expected_words: number;
+  actual_words: number;
+  actual_notes: number;
+  suspect_section: string | null;
+  suggested_repeats: number | null;
 };
 
 function deriveOutPath(midiPath: string): string {
@@ -80,6 +90,7 @@ export default function App() {
   const [alignerDir, setAlignerDir] = useState<string | null>(null);
   const [midi, setMidi] = useState<string | null>(null);
   const [json, setJson] = useState<string | null>(null);
+  const [structurePath, setStructurePath] = useState<string | null>(null);
   const [outPath, setOutPath] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AlignerResult | null>(null);
@@ -130,6 +141,14 @@ export default function App() {
     if (typeof selected === 'string') setJson(selected);
   }
 
+  async function pickStructure() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Structure JSON', extensions: ['json'] }],
+    });
+    if (typeof selected === 'string') setStructurePath(selected);
+  }
+
   async function runAligner() {
     if (!alignerDir || !midi || !json || !outPath) return;
     setRunning(true);
@@ -141,6 +160,7 @@ export default function App() {
         midiPath: midi,
         jsonPath: json,
         outPath,
+        structurePath,
       });
       setResult(r);
       if (r.success) {
@@ -244,6 +264,14 @@ export default function App() {
           <PickerRow label="aligner dir" value={alignerDir} onPick={pickAlignerDir} disabled={running} />
           <PickerRow label="midi" value={midi} onPick={pickMidi} disabled={running} />
           <PickerRow label="json" value={json} onPick={pickJson} disabled={running} />
+          <PickerRow
+            label="structure"
+            value={structurePath}
+            placeholder="(optional)"
+            onPick={pickStructure}
+            onClear={() => setStructurePath(null)}
+            disabled={running}
+          />
           <div className="picker-row">
             <span className="k">out</span>
             <input
@@ -318,6 +346,7 @@ export default function App() {
         {review && (
           <>
             <SummaryGrid summary={review.summary} />
+            {review.structure_check && <StructureCheckCard check={review.structure_check} />}
             <FlagsList items={review.items} />
           </>
         )}
@@ -345,6 +374,28 @@ function SummaryGrid({ summary }: { summary: ReviewSidecar['summary'] }) {
           <div className="summary-v">{v}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function StructureCheckCard({ check }: { check: StructureCheck }) {
+  return (
+    <div className={'struct-check ' + (check.ok ? 'struct-ok' : 'struct-fail')}>
+      <div className="struct-head">
+        <span className="struct-badge">{check.ok ? 'Structure OK' : 'Structure mismatch'}</span>
+        <span className="muted">
+          words {check.actual_words}/{check.expected_words} · notes {check.actual_notes}
+        </span>
+      </div>
+      <div className="struct-msg">{check.message}</div>
+      {check.suspect_section && (
+        <div className="struct-suspect">
+          <span className="muted">suspect</span> <strong>{check.suspect_section}</strong>
+          {check.suggested_repeats != null && (
+            <span className="muted"> · try repeats = {check.suggested_repeats}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -388,20 +439,33 @@ function PickerRow({
   label,
   value,
   onPick,
+  onClear,
   disabled,
+  placeholder,
 }: {
   label: string;
   value: string | null;
   onPick: () => void;
+  onClear?: () => void;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   return (
     <div className="picker-row">
       <span className="k">{label}</span>
-      <span className={'v path-cell ' + (value ? '' : 'muted')}>{value ?? '(not set)'}</span>
-      <button className="btn btn-ghost" onClick={onPick} disabled={disabled}>
-        Pick…
-      </button>
+      <span className={'v path-cell ' + (value ? '' : 'muted')}>
+        {value ?? placeholder ?? '(not set)'}
+      </span>
+      <div className="picker-actions">
+        {value && onClear && (
+          <button className="btn btn-ghost btn-mini" onClick={onClear} disabled={disabled} title="Clear">
+            ✕
+          </button>
+        )}
+        <button className="btn btn-ghost" onClick={onPick} disabled={disabled}>
+          Pick…
+        </button>
+      </div>
     </div>
   );
 }
