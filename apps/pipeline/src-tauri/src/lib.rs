@@ -60,11 +60,57 @@ fn python_check() -> PythonInfo {
     }
 }
 
+#[derive(Serialize)]
+struct AlignerResult {
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    out_path: String,
+}
+
+/// Run the lyric-midi aligner as a Python subprocess.
+///
+/// Invokes `python3 -m aligner <midi_path> <json_path> -o <out_path>`
+/// with cwd set to `aligner_dir`. Captures stdout, stderr, and the exit
+/// code in one shot — no streaming yet; that's the next slice.
+#[tauri::command]
+fn run_aligner(
+    aligner_dir: String,
+    midi_path: String,
+    json_path: String,
+    out_path: String,
+) -> Result<AlignerResult, String> {
+    let output = Command::new("python3")
+        .arg("-m")
+        .arg("aligner")
+        .arg(&midi_path)
+        .arg(&json_path)
+        .arg("-o")
+        .arg(&out_path)
+        .current_dir(&aligner_dir)
+        .output()
+        .map_err(|e| format!("failed to spawn python3: {}", e))?;
+
+    Ok(AlignerResult {
+        success: output.status.success(),
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        out_path,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![health_check, python_check])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            health_check,
+            python_check,
+            run_aligner
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
