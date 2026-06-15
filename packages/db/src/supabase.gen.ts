@@ -162,10 +162,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      find_user_by_email: {
-        Args: { p_email: string }
-        Returns: string | null
-      }
+      find_user_by_email: { Args: { p_email: string }; Returns: string }
+      user_can_edit_song: { Args: { p_song_id: string }; Returns: boolean }
+      user_owns_song: { Args: { p_song_id: string }; Returns: boolean }
+      user_shares_song: { Args: { p_song_id: string }; Returns: boolean }
     }
     Enums: {
       lead_gender: "male" | "female"
