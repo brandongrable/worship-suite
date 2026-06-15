@@ -169,6 +169,115 @@ struct PublishResult {
     title: String,
 }
 
+/// Map a raw section name from the aligner's sidecar (lowercase
+/// human label like "verse 1", "chorus", "verse 2 (repeat)") to one
+/// of the core's SectionType enum values. Unknown names fall back
+/// to INSTRUMENTAL — sections we can't classify are most likely
+/// non-vocal interludes, and INSTRUMENTAL renders neutrally in
+/// the mixer's section bar.
+fn map_section_type(name: &str) -> &'static str {
+    let lower = name.to_ascii_lowercase();
+    let normalized = lower
+        .replace('-', " ")
+        .replace('_', " ");
+    // Strip a trailing instance number ("verse 1" -> "verse") and any
+    // parenthetical annotation ("verse 1 (repeat)" -> "verse").
+    let cleaned: String = normalized
+        .split('(')
+        .next()
+        .unwrap_or(&normalized)
+        .chars()
+        .filter(|c| !c.is_ascii_digit())
+        .collect::<String>()
+        .trim()
+        .to_string();
+    // Order matters: check the multi-word forms first so "pre chorus"
+    // doesn't get classified as just "chorus".
+    if cleaned.starts_with("pre chorus") || cleaned.starts_with("prechorus") {
+        return "PRE_CHORUS";
+    }
+    if cleaned.starts_with("post chorus") || cleaned.starts_with("postchorus") {
+        return "POST_CHORUS";
+    }
+    match cleaned.as_str() {
+        s if s.starts_with("intro") => "INTRO",
+        s if s.starts_with("verse") => "VERSE",
+        s if s.starts_with("chorus") => "CHORUS",
+        s if s.starts_with("bridge") => "BRIDGE",
+        s if s.starts_with("refrain") => "REFRAIN",
+        s if s.starts_with("tag") => "TAG",
+        s if s.starts_with("outro") => "OUTRO",
+        s if s.starts_with("ending") => "ENDING",
+        s if s.starts_with("instrumental") => "INSTRUMENTAL",
+        s if s.starts_with("interlude") => "INTERLUDE",
+        s if s.starts_with("vamp") => "VAMP",
+        s if s.starts_with("turnaround") => "TURNAROUND",
+        _ => "INSTRUMENTAL",
+    }
+}
+
+/// In-place transformation of `record.sections` from the aligner's
+/// raw timing format to the core `Section[]` shape Vocal Booth's
+/// mixer consumes via its adapter.
+///
+/// Raw entry:
+///   { name, repeat_index, start_sec, end_sec, words, instrumental }
+///
+/// Core Section entry:
+///   { id, type, instanceNumber, startTime, endTime, partStatus }
+///
+/// `instanceNumber` is a per-SectionType counter across the whole
+/// performance (so "verse 1" + "verse 1 (repeat)" become VERSE/1 +
+/// VERSE/2 in the canonicalized form). `partStatus` is left empty
+/// — harmony arrangement is Vocal Booth's authoring concern, not
+/// the producer's; an owner can fill it in via the SectionsPanel.
+fn normalize_sections_in_record(record: &mut Value) {
+    let Some(raw) = record.get("sections").and_then(|v| v.as_array()) else {
+        return;
+    };
+    if raw.is_empty() {
+        return;
+    }
+
+    use std::collections::HashMap;
+    let mut instance_counter: HashMap<&'static str, i64> = HashMap::new();
+    let mut canonical: Vec<Value> = Vec::with_capacity(raw.len());
+
+    for entry in raw.iter() {
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let start = entry.get("start_sec").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let end = entry.get("end_sec").and_then(|v| v.as_f64()).unwrap_or(start);
+        let section_type = map_section_type(name);
+        let count = instance_counter.entry(section_type).or_insert(0);
+        *count += 1;
+        let instance_number = *count;
+        canonical.push(json!({
+            "id": format!("{}_{}", section_type.to_lowercase(), instance_number),
+            "type": section_type,
+            "instanceNumber": instance_number,
+            "startTime": start,
+            "endTime": end,
+            "partStatus": {
+                "soprano": "inactive",
+                "alto": "inactive",
+                "tenor": "inactive",
+                "baritone": "inactive",
+            },
+        }));
+    }
+
+    // Preserve the raw producer-side timings on a sibling key so
+    // they're available for debugging / re-derivation without
+    // re-running the aligner. The mixer adapter only reads
+    // `sections`, so this is a no-op consumer-side.
+    if let Some(obj) = record.as_object_mut() {
+        if let Some(raw_value) = obj.remove("sections") {
+            obj.insert("section_timings_raw".to_string(), raw_value);
+        }
+        obj.insert("sections".to_string(), Value::Array(canonical));
+    }
+}
+
 /// Insert a minimal song row into the Supabase `songs` table via
 /// PostgREST. Uses the service role key (RLS-bypassing) so this works
 /// without an end-user session — appropriate for a producer/admin
@@ -194,7 +303,11 @@ fn publish_song(input: PublishInput) -> Result<PublishResult, String> {
         "lead_gender": input.lead_gender,
         "visibility": "private",
     });
-    if let Some(record) = input.record {
+    if let Some(mut record) = input.record {
+        // Transform the aligner's raw section timings (if present) into
+        // the core Section[] shape Vocal Booth's mixer adapter expects.
+        // No-op when the producer didn't run with a structure map.
+        normalize_sections_in_record(&mut record);
         body["record"] = record;
     }
 
@@ -433,4 +546,115 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_common_section_names() {
+        assert_eq!(map_section_type("intro"), "INTRO");
+        assert_eq!(map_section_type("Intro"), "INTRO");
+        assert_eq!(map_section_type("verse 1"), "VERSE");
+        assert_eq!(map_section_type("verse 2 (repeat)"), "VERSE");
+        assert_eq!(map_section_type("chorus"), "CHORUS");
+        assert_eq!(map_section_type("pre-chorus"), "PRE_CHORUS");
+        assert_eq!(map_section_type("PRE CHORUS"), "PRE_CHORUS");
+        assert_eq!(map_section_type("post chorus"), "POST_CHORUS");
+        assert_eq!(map_section_type("post-chorus"), "POST_CHORUS");
+        assert_eq!(map_section_type("bridge"), "BRIDGE");
+        assert_eq!(map_section_type("tag"), "TAG");
+        assert_eq!(map_section_type("outro"), "OUTRO");
+        assert_eq!(map_section_type("instrumental"), "INSTRUMENTAL");
+        assert_eq!(map_section_type("turnaround"), "TURNAROUND");
+        // Unknown labels fall back to INSTRUMENTAL.
+        assert_eq!(map_section_type("breakdown"), "INSTRUMENTAL");
+        assert_eq!(map_section_type(""), "INSTRUMENTAL");
+    }
+
+    #[test]
+    fn normalize_skips_when_no_sections_field() {
+        let mut record = json!({ "summary": { "tempo_bpm": 128 } });
+        let before = record.clone();
+        normalize_sections_in_record(&mut record);
+        assert_eq!(record, before);
+    }
+
+    #[test]
+    fn normalize_skips_when_sections_empty() {
+        let mut record = json!({ "sections": [] });
+        let before = record.clone();
+        normalize_sections_in_record(&mut record);
+        assert_eq!(record, before);
+    }
+
+    #[test]
+    fn normalize_transforms_raw_timings_to_core_sections() {
+        let mut record = json!({
+            "sections": [
+                { "name": "intro", "repeat_index": 1, "start_sec": 0.0, "end_sec": 18.0, "words": 0, "instrumental": true },
+                { "name": "verse 1", "repeat_index": 1, "start_sec": 18.0, "end_sec": 33.0, "words": 24, "instrumental": false },
+                { "name": "chorus", "repeat_index": 1, "start_sec": 48.0, "end_sec": 63.0, "words": 25, "instrumental": false },
+                { "name": "chorus", "repeat_index": 2, "start_sec": 101.0, "end_sec": 116.0, "words": 25, "instrumental": false },
+                { "name": "verse 1 (repeat)", "repeat_index": 1, "start_sec": 33.0, "end_sec": 48.0, "words": 24, "instrumental": false },
+            ]
+        });
+
+        normalize_sections_in_record(&mut record);
+
+        // Raw input is preserved on a sibling key for debugging.
+        let raw = record.get("section_timings_raw").unwrap();
+        assert_eq!(raw.as_array().unwrap().len(), 5);
+
+        // `sections` is now the core Section[] shape, in the same
+        // order as the raw input (chronology decisions live consumer-
+        // side; the adapter sorts by startTime).
+        let canonical = record.get("sections").unwrap().as_array().unwrap();
+        assert_eq!(canonical.len(), 5);
+
+        // INTRO/1, VERSE/1, CHORUS/1, CHORUS/2, VERSE/2 — the second
+        // verse instance is "verse 1 (repeat)" mapped to VERSE/2 via
+        // the per-type instance counter.
+        assert_eq!(canonical[0]["type"], "INTRO");
+        assert_eq!(canonical[0]["instanceNumber"], 1);
+        assert_eq!(canonical[1]["type"], "VERSE");
+        assert_eq!(canonical[1]["instanceNumber"], 1);
+        assert_eq!(canonical[2]["type"], "CHORUS");
+        assert_eq!(canonical[2]["instanceNumber"], 1);
+        assert_eq!(canonical[3]["type"], "CHORUS");
+        assert_eq!(canonical[3]["instanceNumber"], 2);
+        assert_eq!(canonical[4]["type"], "VERSE");
+        assert_eq!(canonical[4]["instanceNumber"], 2);
+
+        // partStatus defaults to all-inactive so the section bar
+        // renders cleanly until an owner authors harmony.
+        let part_status = canonical[2].get("partStatus").unwrap();
+        assert_eq!(part_status["soprano"], "inactive");
+        assert_eq!(part_status["alto"], "inactive");
+        assert_eq!(part_status["tenor"], "inactive");
+        assert_eq!(part_status["baritone"], "inactive");
+
+        // startTime / endTime carry over as f64 from the raw timings.
+        assert_eq!(canonical[1]["startTime"], 18.0);
+        assert_eq!(canonical[1]["endTime"], 33.0);
+    }
+
+    #[test]
+    fn normalize_preserves_unrelated_record_keys() {
+        let mut record = json!({
+            "summary": { "tempo_bpm": 128 },
+            "items": [{ "kind": "low_confidence" }],
+            "stems": { "lead": "stems/abc/lead.mp3" },
+            "sections": [
+                { "name": "verse 1", "repeat_index": 1, "start_sec": 0.0, "end_sec": 10.0, "words": 5, "instrumental": false },
+            ],
+        });
+
+        normalize_sections_in_record(&mut record);
+
+        assert_eq!(record["summary"]["tempo_bpm"], 128);
+        assert_eq!(record["items"].as_array().unwrap().len(), 1);
+        assert_eq!(record["stems"]["lead"], "stems/abc/lead.mp3");
+    }
 }
