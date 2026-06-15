@@ -9,6 +9,7 @@ import {
   type ShareWithRecipient,
 } from './lib/shares';
 import { supabase } from './lib/supabase';
+import SectionsPanel from './SectionsPanel';
 
 const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 const sansFont = "'DM Sans', sans-serif";
@@ -192,10 +193,7 @@ export default function SongDetail({
         )}
 
         <SectionLabel>Sections</SectionLabel>
-        <Muted>
-          No structured sections yet. Pipeline will populate <code>sections</code> and{' '}
-          <code>parts</code> as dedicated columns in a future slice.
-        </Muted>
+        <SectionsPanel song={song} ownedByMe={ownedByMe} onUpdated={handleSongUpdate} />
       </div>
     </div>
   );

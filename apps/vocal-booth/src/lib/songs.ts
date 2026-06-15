@@ -112,6 +112,29 @@ export async function uploadAndRegisterStem(
 }
 
 /**
+ * Patch the song's sections array under `record.sections`. Used by
+ * the SongDetail SectionsPanel when an owner authors sections by
+ * hand — until Pipeline writes them automatically from MusicXML.
+ * Leaves every other top-level key in `record` untouched (read-
+ * modify-write semantics, same as Charter's saveSongCharter).
+ */
+export async function saveSongSections(
+  song: Song,
+  sections: unknown[],
+): Promise<Song> {
+  const existing = (song.record ?? {}) as Record<string, unknown>;
+  const nextRecord = { ...existing, sections } as unknown as Song['record'];
+  const { data, error } = await supabase
+    .from('songs')
+    .update({ record: nextRecord })
+    .eq('id', song.id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/**
  * Remove a stem from both Storage and `songs.record.stems`. Used by
  * the SongDetail "Replace" / "Remove" affordance.
  */
