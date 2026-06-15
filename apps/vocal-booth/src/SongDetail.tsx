@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from 'react';
 import type { Song } from './lib/songs';
+import { supabase } from './lib/supabase';
 
 const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 const sansFont = "'DM Sans', sans-serif";
@@ -130,6 +132,58 @@ export default function SongDetail({
 function StemsList({ record }: { record: Song['record'] }) {
   const r = (record ?? {}) as RecordShape;
   const stems = r.stems;
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState<string | null>(null);
+  const [loading, setLoading] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      // Stop any audio when leaving the page.
+      audioRef.current?.pause();
+      audioRef.current = null;
+    };
+  }, []);
+
+  async function play(track: string, storageKey: string) {
+    setErr(null);
+
+    // Toggle off if this track is the one playing.
+    if (playing === track) {
+      audioRef.current?.pause();
+      setPlaying(null);
+      return;
+    }
+
+    setLoading(track);
+    try {
+      // Storage key is "stems/<song_id>/<track>.<ext>". The bucket
+      // create-signed-url API wants the path WITHIN the bucket.
+      const objectPath = storageKey.replace(/^stems\//, '');
+      const { data, error } = await supabase.storage
+        .from('stems')
+        .createSignedUrl(objectPath, 3600);
+      if (error) throw error;
+
+      audioRef.current?.pause();
+      const audio = new Audio(data.signedUrl);
+      audio.onended = () => setPlaying(null);
+      audio.onerror = () => {
+        setErr(`Audio element failed to load ${track}`);
+        setPlaying(null);
+      };
+      audioRef.current = audio;
+      await audio.play();
+      setPlaying(track);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setPlaying(null);
+    } finally {
+      setLoading(null);
+    }
+  }
+
   if (!stems || Object.keys(stems).length === 0) {
     return (
       <Muted>
@@ -140,43 +194,86 @@ function StemsList({ record }: { record: Song['record'] }) {
   }
   return (
     <div style={{ display: 'grid', gap: 6 }}>
-      {Object.entries(stems).map(([track, storageKey]) => (
+      {err && (
         <div
-          key={track}
           style={{
-            display: 'grid',
-            gridTemplateColumns: '120px 1fr',
-            gap: 12,
             padding: '8px 12px',
             borderRadius: 6,
-            background: 'rgba(91,140,62,0.06)',
-            border: '1px solid rgba(91,140,62,0.2)',
+            background: 'rgba(217,69,69,0.06)',
+            border: '1px solid rgba(217,69,69,0.3)',
+            color: '#D94545',
             fontSize: 12,
+            fontFamily: monoFont,
           }}
         >
-          <span
-            style={{
-              color: '#5B8C3E',
-              fontFamily: monoFont,
-              textTransform: 'uppercase',
-              fontSize: 10,
-              letterSpacing: '0.08em',
-              fontWeight: 600,
-            }}
-          >
-            {track}
-          </span>
-          <span
-            style={{
-              fontFamily: monoFont,
-              color: 'rgba(255,255,255,0.7)',
-              wordBreak: 'break-all',
-            }}
-          >
-            {storageKey}
-          </span>
+          {err}
         </div>
-      ))}
+      )}
+      {Object.entries(stems).map(([track, storageKey]) => {
+        const isPlaying = playing === track;
+        const isLoading = loading === track;
+        return (
+          <div
+            key={track}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '90px 1fr auto',
+              gap: 12,
+              alignItems: 'center',
+              padding: '8px 12px',
+              borderRadius: 6,
+              background: isPlaying
+                ? 'rgba(155,106,216,0.08)'
+                : 'rgba(91,140,62,0.06)',
+              border: isPlaying
+                ? '1px solid rgba(155,106,216,0.4)'
+                : '1px solid rgba(91,140,62,0.2)',
+              fontSize: 12,
+              transition: 'background 0.15s, border-color 0.15s',
+            }}
+          >
+            <span
+              style={{
+                color: isPlaying ? '#9B6AD8' : '#5B8C3E',
+                fontFamily: monoFont,
+                textTransform: 'uppercase',
+                fontSize: 10,
+                letterSpacing: '0.08em',
+                fontWeight: 600,
+              }}
+            >
+              {track}
+            </span>
+            <span
+              style={{
+                fontFamily: monoFont,
+                color: 'rgba(255,255,255,0.6)',
+                wordBreak: 'break-all',
+                fontSize: 11,
+              }}
+            >
+              {storageKey}
+            </span>
+            <button
+              onClick={() => play(track, storageKey)}
+              disabled={isLoading}
+              style={{
+                background: isPlaying ? '#9B6AD8' : 'transparent',
+                border: `1px solid ${isPlaying ? '#9B6AD8' : 'rgba(255,255,255,0.15)'}`,
+                color: isPlaying ? '#fff' : 'rgba(255,255,255,0.7)',
+                padding: '4px 12px',
+                borderRadius: 4,
+                fontSize: 11,
+                fontFamily: monoFont,
+                cursor: isLoading ? 'wait' : 'pointer',
+                fontWeight: 600,
+              }}
+            >
+              {isLoading ? '…' : isPlaying ? '◼ Stop' : '▶ Play'}
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 }
