@@ -4,14 +4,17 @@ import { supabase } from './lib/supabase';
 import SignIn from './SignIn';
 import Home from './Home';
 import Library from './Library';
+import SongDetail from './SongDetail';
 import WorshipMixer from './WorshipMixer.jsx';
+import type { Song } from './lib/songs';
 
-type View = 'home' | 'mixer' | 'library';
+type View = 'home' | 'mixer' | 'library' | 'song';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<View>('home');
+  const [selectedSong, setSelectedSong] = useState<Song | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -57,7 +60,29 @@ export default function App() {
   }
 
   if (view === 'library') {
-    return <Library ownerId={session.user.id} onBack={() => setView('home')} />;
+    return (
+      <Library
+        ownerId={session.user.id}
+        onBack={() => setView('home')}
+        onSelect={(song) => {
+          setSelectedSong(song);
+          setView('song');
+        }}
+      />
+    );
+  }
+
+  if (view === 'song' && selectedSong) {
+    return (
+      <SongDetail
+        song={selectedSong}
+        ownedByMe={selectedSong.owner_id === session.user.id}
+        onBack={() => {
+          setSelectedSong(null);
+          setView('library');
+        }}
+      />
+    );
   }
 
   return (

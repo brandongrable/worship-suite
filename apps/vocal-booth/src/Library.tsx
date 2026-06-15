@@ -11,7 +11,15 @@ const KEYS = ['A', 'Bb', 'B', 'C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab'];
 const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 const sansFont = "'DM Sans', sans-serif";
 
-export default function Library({ ownerId, onBack }: { ownerId: string; onBack: () => void }) {
+export default function Library({
+  ownerId,
+  onBack,
+  onSelect,
+}: {
+  ownerId: string;
+  onBack: () => void;
+  onSelect: (song: Song) => void;
+}) {
   const [songs, setSongs] = useState<Song[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +79,7 @@ export default function Library({ ownerId, onBack }: { ownerId: string; onBack: 
                 key={song.id}
                 song={song}
                 ownedByMe={song.owner_id === ownerId}
+                onSelect={() => onSelect(song)}
                 onDeleted={refresh}
                 onDeleteError={(msg) => setError(msg)}
               />
@@ -208,16 +217,20 @@ function NewSongForm({ ownerId, onCreated }: { ownerId: string; onCreated: () =>
 function SongRow({
   song,
   ownedByMe,
+  onSelect,
   onDeleted,
   onDeleteError,
 }: {
   song: Song;
   ownedByMe: boolean;
+  onSelect: () => void;
   onDeleted: () => void;
   onDeleteError: (msg: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  async function handleDelete() {
+
+  async function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation();
     if (!confirm(`Delete "${song.title}"?`)) return;
     setBusy(true);
     try {
@@ -228,8 +241,18 @@ function SongRow({
       setBusy(false);
     }
   }
+
   return (
     <li
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      tabIndex={0}
+      role="button"
       style={{
         padding: '12px 14px',
         borderRadius: 10,
@@ -239,6 +262,16 @@ function SongRow({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 12,
+        cursor: 'pointer',
+        transition: 'background 0.15s, border-color 0.15s',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
       }}
     >
       <div style={{ minWidth: 0 }}>
@@ -261,6 +294,7 @@ function SongRow({
             fontSize: 11,
             cursor: busy ? 'wait' : 'pointer',
             fontFamily: monoFont,
+            flexShrink: 0,
           }}
         >
           {busy ? '…' : 'Delete'}
