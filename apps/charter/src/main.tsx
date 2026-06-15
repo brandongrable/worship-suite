@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import ChordChartFormatter from './ChartFormatter.jsx';
+import App from './App';
 import './index.css';
 
 const root = document.getElementById('root');
@@ -8,6 +8,6 @@ if (!root) throw new Error('#root not found');
 
 createRoot(root).render(
   <StrictMode>
-    <ChordChartFormatter />
+    <App />
   </StrictMode>,
 );

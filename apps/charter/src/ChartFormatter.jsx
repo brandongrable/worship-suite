@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Plus, Trash2, Lock, Unlock, Music, Save, Upload, ChevronUp, ChevronDown, X, GripVertical, Eye, Edit3, FileDown, UploadCloud, Loader2, AlertCircle, CheckCircle2, Undo2, Redo2 } from "lucide-react";
+import { Plus, Trash2, Lock, Unlock, Music, Save, Upload, ChevronUp, ChevronDown, X, GripVertical, Eye, Edit3, FileDown, UploadCloud, Loader2, AlertCircle, CheckCircle2, Undo2, Redo2, Cloud } from "lucide-react";
 import { transposeNote } from "@worship/core";
+import { saveSongCharter } from "./lib/songs.ts";
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const ALL_KEYS = ['A','Bb','B','C','C#','D','Eb','E','F','F#','G','Ab'];
@@ -75,6 +76,36 @@ function makeInitialState() {
     useFlats: false,
     sourcePdfBase64: null,
     sourcePdfName: null,
+  };
+}
+
+// Hydrate Charter's editor state from a DB song row. Top-level columns
+// (title, key, bpm) win over anything in `record.charter.metadata`,
+// since the DB is authoritative for those fields. Everything else comes
+// from `record.charter` when present, with sane defaults otherwise.
+function songToCharterState(song) {
+  const record = (song && song.record) || {};
+  const charter = (record && record.charter) || {};
+  const cmeta = (charter && charter.metadata) || {};
+  return {
+    metadata: {
+      title: song.title || '',
+      artist: cmeta.artist || '',
+      key: song.key || 'C',
+      tempo: song.bpm != null ? String(song.bpm) : '',
+      time: cmeta.time || '4/4',
+      arrangementName: cmeta.arrangementName || '',
+    },
+    sections:
+      Array.isArray(charter.sections) && charter.sections.length
+        ? charter.sections
+        : [makeSection('INTRO', 0)],
+    songForm: charter.songForm || '',
+    footerTags: Array.isArray(charter.footerTags) ? charter.footerTags : [],
+    transposeSemitones: Number(charter.transposeSemitones) || 0,
+    useFlats: !!charter.useFlats,
+    sourcePdfBase64: charter.sourcePdfBase64 || null,
+    sourcePdfName: charter.sourcePdfName || null,
   };
 }
 
@@ -1297,12 +1328,60 @@ function useHistory(initialState, maxHistory = 50) {
 }
 
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
-export default function ChordChartFormatter() {
-  const { current: state, push: pushState, undo, redo, canUndo, canRedo, reset: resetHistory } = useHistory(makeInitialState());
+/**
+ * @param {{
+ *   song?: import('./lib/songs').Song | null,
+ *   onExit?: (() => void) | null,
+ * }} props
+ */
+export default function ChordChartFormatter({ song = null, onExit = null }) {
+  const initial = song ? songToCharterState(song) : makeInitialState();
+  const { current: state, push: pushState, undo, redo, canUndo, canRedo, reset: resetHistory } = useHistory(initial);
   const [view, setView] = useState('edit');
   const [showUpload, setShowUpload] = useState(false);
   const [parsedPreview, setParsedPreview] = useState(null);
   const fileInputRef = useRef(null);
+  // 'idle' | 'saving' | 'saved' | 'error'
+  const [cloudStatus, setCloudStatus] = useState('idle');
+  const [cloudError, setCloudError] = useState(null);
+
+  async function saveToCloud() {
+    if (!song) return;
+    setCloudStatus('saving');
+    setCloudError(null);
+    try {
+      const tempoNum = Number(state.metadata.tempo);
+      const bpm =
+        Number.isFinite(tempoNum) && tempoNum > 0 ? tempoNum : song.bpm;
+      const charter = {
+        metadata: {
+          artist: state.metadata.artist,
+          time: state.metadata.time,
+          arrangementName: state.metadata.arrangementName,
+        },
+        sections: state.sections,
+        songForm: state.songForm,
+        footerTags: state.footerTags,
+        transposeSemitones: state.transposeSemitones,
+        useFlats: state.useFlats,
+        sourcePdfBase64: state.sourcePdfBase64,
+        sourcePdfName: state.sourcePdfName,
+      };
+      await saveSongCharter(song.id, {
+        title: state.metadata.title,
+        key: state.metadata.key,
+        bpm,
+        charter,
+      });
+      setCloudStatus('saved');
+      setTimeout(() => {
+        setCloudStatus((s) => (s === 'saved' ? 'idle' : s));
+      }, 2000);
+    } catch (e) {
+      setCloudStatus('error');
+      setCloudError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   const { metadata, sections, songForm, footerTags, transposeSemitones, useFlats } = state;
 
@@ -1425,6 +1504,16 @@ export default function ChordChartFormatter() {
         {/* Toolbar */}
         <div className="sticky top-0 z-50 bg-gray-900/95 backdrop-blur border-b border-gray-800 px-4 py-2">
           <div className="max-w-6xl mx-auto flex items-center gap-2 flex-wrap">
+            {onExit && (
+              <button
+                onClick={onExit}
+                className="text-xs text-gray-400 hover:text-white flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-800"
+                title="Back to songs"
+              >
+                ‹ Songs
+              </button>
+            )}
+
             <div className="flex items-center gap-2 mr-3">
               <Music size={20} className="text-amber-400" />
               <span className="font-bold text-sm tracking-wide text-amber-400">CHART FORMATTER</span>
@@ -1477,7 +1566,30 @@ export default function ChordChartFormatter() {
 
             <button onClick={unlockAll} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800"><Unlock size={12} /> Unlock All</button>
             <button onClick={lockAll} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800"><Lock size={12} /> Lock All</button>
-            <button onClick={saveSession} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800"><Save size={12} /> Save</button>
+            {song && (
+              <button
+                onClick={saveToCloud}
+                disabled={cloudStatus === 'saving'}
+                className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-1.5 rounded transition-colors ${
+                  cloudStatus === 'saved'
+                    ? 'bg-emerald-600 text-white'
+                    : cloudStatus === 'error'
+                      ? 'bg-red-600 text-white'
+                      : 'bg-purple-600 text-white hover:bg-purple-500'
+                }`}
+                title={cloudError || 'Save chart to your Supabase song row'}
+              >
+                {cloudStatus === 'saving' ? <Loader2 size={12} className="animate-spin" /> : <Cloud size={12} />}
+                {cloudStatus === 'saving'
+                  ? 'Saving…'
+                  : cloudStatus === 'saved'
+                    ? 'Saved'
+                    : cloudStatus === 'error'
+                      ? 'Save failed'
+                      : 'Save to cloud'}
+              </button>
+            )}
+            <button onClick={saveSession} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800" title="Export session JSON file"><Save size={12} /> JSON</button>
             <button onClick={() => fileInputRef.current?.click()} className="text-xs text-gray-400 hover:text-white flex items-center gap-1 px-2 py-1.5 rounded hover:bg-gray-800"><Upload size={12} /> Load</button>
             <button onClick={handlePrint} className="text-xs bg-amber-500 text-gray-900 font-semibold flex items-center gap-1 px-3 py-1.5 rounded hover:bg-amber-400 transition-colors"><FileDown size={12} /> Export PDF</button>
             <input ref={fileInputRef} type="file" accept=".json" onChange={loadSession} className="hidden" />

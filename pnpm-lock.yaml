@@ -17,9 +17,15 @@ importers:
 
   apps/charter:
     dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.46.1
+        version: 2.108.1
       '@worship/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@worship/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       lucide-react:
         specifier: ^0.456.0
         version: 0.456.0(react@18.3.1)
