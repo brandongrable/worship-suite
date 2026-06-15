@@ -165,11 +165,18 @@ function useAudioEngine(songDuration) {
     return ctxRef.current;
   }, []);
 
-  const loadStem = useCallback(async (trackId, file) => {
+  // `source` is either a File (picked from disk) or { url, label } (a
+  // signed Storage URL for a stem published by Pipeline). Returns the
+  // decoded AudioBuffer so callers can read its `duration`.
+  const loadStem = useCallback(async (trackId, source) => {
     const ctx = getCtx();
     setLoading(true);
     try {
-      const ab = await file.arrayBuffer();
+      const isFile = source instanceof File;
+      const ab = isFile
+        ? await source.arrayBuffer()
+        : await (await fetch(source.url)).arrayBuffer();
+      const label = isFile ? source.name : source.label;
       const buf = await ctx.decodeAudioData(ab);
       buffersRef.current[trackId] = buf;
       if (!gainsRef.current[trackId]) {
@@ -177,9 +184,14 @@ function useAudioEngine(songDuration) {
         gain.connect(ctx.destination);
         gainsRef.current[trackId] = gain;
       }
-      setLoadedTracks((prev) => ({ ...prev, [trackId]: file.name }));
-    } catch (err) { console.error(`Failed to load ${trackId}:`, err); }
-    setLoading(false);
+      setLoadedTracks((prev) => ({ ...prev, [trackId]: label }));
+      setLoading(false);
+      return buf;
+    } catch (err) {
+      console.error(`Failed to load ${trackId}:`, err);
+      setLoading(false);
+      return null;
+    }
   }, [getCtx]);
 
   const stopAll = useCallback(() => {
