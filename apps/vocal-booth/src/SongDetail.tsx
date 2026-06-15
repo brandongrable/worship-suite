@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Song } from './lib/songs';
 import { removeStem, uploadAndRegisterStem } from './lib/songs';
+import {
+  addShare,
+  findUserIdByEmail,
+  listSharesForSong,
+  removeShare,
+  type ShareWithRecipient,
+} from './lib/shares';
 import { supabase } from './lib/supabase';
 
 const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
@@ -176,6 +183,13 @@ export default function SongDetail({
           ownedByMe={ownedByMe}
           onUpdated={handleSongUpdate}
         />
+
+        {ownedByMe && (
+          <>
+            <SectionLabel>Sharing</SectionLabel>
+            <SharingPanel songId={song.id} />
+          </>
+        )}
 
         <SectionLabel>Sections</SectionLabel>
         <Muted>
@@ -397,6 +411,232 @@ function StemsPanel({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function SharingPanel({ songId }: { songId: string }) {
+  const [shares, setShares] = useState<ShareWithRecipient[] | null>(null);
+  const [email, setEmail] = useState('');
+  const [canEdit, setCanEdit] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'looking' | 'sharing'>('idle');
+  const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      setShares(await listSharesForSong(songId));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [songId]);
+
+  async function submitShare() {
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    setErr(null);
+    setInfo(null);
+    setStatus('looking');
+    try {
+      const userId = await findUserIdByEmail(trimmed);
+      if (!userId) {
+        setErr(`No Worship Suite account found for ${trimmed}.`);
+        setStatus('idle');
+        return;
+      }
+      setStatus('sharing');
+      await addShare(songId, userId, canEdit);
+      setEmail('');
+      setCanEdit(false);
+      setInfo(`Shared with ${trimmed}.`);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStatus('idle');
+    }
+  }
+
+  async function revoke(userId: string) {
+    if (!confirm('Revoke this share? The recipient will lose access.')) return;
+    setErr(null);
+    try {
+      await removeShare(songId, userId);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      {err && (
+        <div
+          style={{
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: 'rgba(217,69,69,0.06)',
+            border: '1px solid rgba(217,69,69,0.3)',
+            color: '#D94545',
+            fontSize: 12,
+            fontFamily: monoFont,
+          }}
+        >
+          {err}
+        </div>
+      )}
+      {info && (
+        <div
+          style={{
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: 'rgba(91,140,62,0.08)',
+            border: '1px solid rgba(91,140,62,0.3)',
+            color: '#5B8C3E',
+            fontSize: 12,
+            fontFamily: monoFont,
+          }}
+        >
+          {info}
+        </div>
+      )}
+
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          padding: 12,
+          borderRadius: 10,
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <input
+          type="email"
+          placeholder="recipient@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submitShare();
+          }}
+          style={{
+            flex: '1 1 200px',
+            padding: '8px 10px',
+            borderRadius: 6,
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(0,0,0,0.3)',
+            color: '#fff',
+            fontSize: 12,
+            fontFamily: sansFont,
+          }}
+        />
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.6)',
+            fontFamily: monoFont,
+            cursor: 'pointer',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={canEdit}
+            onChange={(e) => setCanEdit(e.target.checked)}
+          />
+          can edit
+        </label>
+        <button
+          onClick={submitShare}
+          disabled={status !== 'idle' || !email.trim()}
+          style={{
+            padding: '8px 14px',
+            borderRadius: 6,
+            border: 'none',
+            background: status !== 'idle' ? 'rgba(155,106,216,0.4)' : '#9B6AD8',
+            color: '#fff',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: status !== 'idle' ? 'wait' : 'pointer',
+            fontFamily: sansFont,
+          }}
+        >
+          {status === 'looking' ? 'Looking up…' : status === 'sharing' ? 'Sharing…' : 'Share'}
+        </button>
+      </div>
+
+      {shares === null ? (
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>Loading shares…</div>
+      ) : shares.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>
+          Not shared with anyone yet.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {shares.map((s) => (
+            <div
+              key={s.user_id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: '#fff',
+                    fontFamily: sansFont,
+                  }}
+                >
+                  {s.display_name ?? s.user_id}
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: 'rgba(255,255,255,0.4)',
+                    fontFamily: monoFont,
+                    marginTop: 2,
+                  }}
+                >
+                  {s.can_edit ? 'editor' : 'reader'} ·{' '}
+                  {new Date(s.created_at).toLocaleDateString()}
+                </div>
+              </div>
+              <button
+                onClick={() => revoke(s.user_id)}
+                style={{
+                  background: 'transparent',
+                  border: '1px solid rgba(217,69,69,0.3)',
+                  color: '#D94545',
+                  padding: '4px 10px',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: monoFont,
+                }}
+              >
+                Revoke
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

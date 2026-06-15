@@ -162,7 +162,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      find_user_by_email: {
+        Args: { p_email: string }
+        Returns: string | null
+      }
     }
     Enums: {
       lead_gender: "male" | "female"
