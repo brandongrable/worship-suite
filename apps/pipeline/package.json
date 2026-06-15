@@ -1,12 +1,30 @@
 {
   "name": "@worship/pipeline",
-  "version": "0.1.0",
   "private": true,
-  "description": "Producer desktop app — Tauri shell pending. See README.",
+  "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "build": "echo '(pipeline build skipped — Tauri scaffold pending)' && exit 0",
-    "dev": "echo '(pipeline dev skipped — Tauri scaffold pending — install Rust + pnpm create tauri-app)' && exit 0",
-    "typecheck": "echo '(no TS sources yet)' && exit 0",
-    "test": "echo 'no tests yet' && exit 0"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'no tests yet' && exit 0",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "@tauri-apps/cli": "^2"
   }
 }
