@@ -1,14 +1,31 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct Health {
+    ok: bool,
+    rust: String,
+}
+
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
+fn health_check() -> Health {
+    Health {
+        ok: true,
+        rust: format!("{}", rustc_version_runtime()),
+    }
+}
+
+fn rustc_version_runtime() -> String {
+    // Tauri itself reports the version via env at build time; expose a
+    // simple known string for now. We'll surface real subprocess
+    // health (Python aligner reachable, etc.) as we wire each stage.
+    "ready".to_string()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![health_check])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "pipeline",
+  "productName": "Worship Pipeline",
   "version": "0.1.0",
   "identifier": "com.worship.pipeline",
   "build": {
@@ -12,7 +12,9 @@
   "app": {
     "windows": [
       {
-        "title": "pipeline",
+        "title": "Worship Pipeline",
+        "minWidth": 720,
+        "minHeight": 480,
         "width": 800,
         "height": 600
       }
