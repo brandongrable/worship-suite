@@ -270,11 +270,61 @@ fn normalize_sections_in_record(record: &mut Value) {
     // they're available for debugging / re-derivation without
     // re-running the aligner. The mixer adapter only reads
     // `sections`, so this is a no-op consumer-side.
+    let canonical_ids: Vec<String> = canonical
+        .iter()
+        .map(|s| {
+            s.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect();
     if let Some(obj) = record.as_object_mut() {
         if let Some(raw_value) = obj.remove("sections") {
             obj.insert("section_timings_raw".to_string(), raw_value);
         }
         obj.insert("sections".to_string(), Value::Array(canonical));
+    }
+
+    normalize_parts_in_record(record, &canonical_ids);
+}
+
+/// Walks `record.parts[i].notes[j]`, replacing the aligner's
+/// `section_index` (0-based int into the literal section order)
+/// with `sectionId` (the canonical id assigned by
+/// `normalize_sections_in_record` in the matching position).
+///
+/// Should be called AFTER sections are canonicalized so the two
+/// arrays line up. A `section_index` of null or out-of-range is
+/// preserved as `sectionId: ""` — the consumer-side PartLayer type
+/// requires sectionId, but an empty string is cheaper than failing
+/// the whole publish over a single pickup note.
+fn normalize_parts_in_record(record: &mut Value, section_ids: &[String]) {
+    let Some(parts) = record.get_mut("parts").and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+    for layer in parts.iter_mut() {
+        let Some(notes) = layer.get_mut("notes").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        for note in notes.iter_mut() {
+            let Some(obj) = note.as_object_mut() else { continue };
+            let idx = obj
+                .get("section_index")
+                .and_then(|v| v.as_i64())
+                .and_then(|i| {
+                    if i >= 0 && (i as usize) < section_ids.len() {
+                        Some(i as usize)
+                    } else {
+                        None
+                    }
+                });
+            let section_id = idx
+                .and_then(|i| section_ids.get(i).cloned())
+                .unwrap_or_default();
+            obj.remove("section_index");
+            obj.insert("sectionId".to_string(), Value::String(section_id));
+        }
     }
 }
 
@@ -638,6 +688,53 @@ mod tests {
         // startTime / endTime carry over as f64 from the raw timings.
         assert_eq!(canonical[1]["startTime"], 18.0);
         assert_eq!(canonical[1]["endTime"], 33.0);
+    }
+
+    #[test]
+    fn normalize_transforms_parts_section_index_to_section_id() {
+        let mut record = json!({
+            "sections": [
+                { "name": "intro", "repeat_index": 1, "start_sec": 0.0, "end_sec": 18.0, "words": 0, "instrumental": true },
+                { "name": "verse 1", "repeat_index": 1, "start_sec": 18.0, "end_sec": 33.0, "words": 24, "instrumental": false },
+            ],
+            "parts": [
+                {
+                    "part": "unison",
+                    "notes": [
+                        { "col": 0, "section_index": 0, "onset": 0.0, "duration": 1.0, "pitch": 60, "syllable": null, "confidence": null },
+                        { "col": 1, "section_index": 1, "onset": 18.5, "duration": 0.5, "pitch": 62, "syllable": "I've", "confidence": 0.5 },
+                        { "col": 2, "section_index": null, "onset": 0.0, "duration": 0.5, "pitch": 60, "syllable": null, "confidence": null },
+                    ]
+                }
+            ]
+        });
+
+        normalize_sections_in_record(&mut record);
+
+        // section_index is gone; sectionId carries the canonical id.
+        let notes = &record["parts"][0]["notes"];
+        assert_eq!(notes[0]["sectionId"], "intro_1");
+        assert!(notes[0].get("section_index").is_none());
+        assert_eq!(notes[1]["sectionId"], "verse_1");
+        // Out-of-range / null section_index becomes empty string.
+        assert_eq!(notes[2]["sectionId"], "");
+
+        // Other PartNote fields pass through unchanged.
+        assert_eq!(notes[1]["pitch"], 62);
+        assert_eq!(notes[1]["syllable"], "I've");
+        assert_eq!(notes[1]["confidence"], 0.5);
+    }
+
+    #[test]
+    fn normalize_handles_missing_parts_field() {
+        let mut record = json!({
+            "sections": [
+                { "name": "verse 1", "repeat_index": 1, "start_sec": 0.0, "end_sec": 10.0, "words": 5, "instrumental": false }
+            ]
+        });
+        // Should not panic — parts is just absent.
+        normalize_sections_in_record(&mut record);
+        assert!(record.get("parts").is_none());
     }
 
     #[test]
