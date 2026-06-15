@@ -64,63 +64,106 @@ member can browse, open, and hear the stems in the browser.
 
 ---
 
-## Phase 3 — Mixer integration  🔜 next
+## Phase 3 — Mixer integration  ✅ done
 
-The Vocal Booth mixer prototype still runs on mock data. Phase 3 wires it
-to real songs.
+The Vocal Booth mixer prototype now consumes real songs from Supabase.
 
-- "Open in mixer" button on SongDetail that hands the song record to the
-  prototype mixer
-- Adapter that converts `SongRecord` → the prototype's expected shape
-  (TRACKS, sections, partStatus). Where real data is missing (sections,
-  partStatus), the adapter falls back to sensible defaults.
-- Mixer's `useAudioEngine.loadStem` extended to accept a signed URL
-  instead of a `File` object (fetch + decodeAudioData)
-- Multi-stem playback: click/band/lead/harmonies playing in sync
-- Quick-mix presets + per-track fader behavior preserved from the prototype
+### 3.1 — SongDetail → Mixer wiring  ✅
 
-Stretch within Phase 3:
-- Persisted user state (last song opened, current preset) in
-  `localStorage`
-- Refresh-Library button (currently a hard reload)
+- 3.1a — `songToMixerSong()` adapter maps `Tables<'songs'>` → the
+  prototype's expected shape. Sections/lyrics fall back to a single
+  "Full Song" block + `[]` when absent
+- 3.1b — `useAudioEngine.loadStem` accepts `File | { url, label }`;
+  signed-URL path fetches + decodes via `AudioContext`. Returns the
+  decoded buffer so callers can read `duration`
+- 3.1c — "Open in Mixer" CTA on SongDetail, new `"loading-remote"`
+  phase in the mixer that batch-signs every entry in `record.stems`,
+  decodes them, and advances to the playback surface
 
-## Phase 4 — Sections + harmony parts  📋
+### 3.2 — Browser stem uploader  ✅
+
+- `uploadAndRegisterStem` + `removeStem` helpers mirror Pipeline's
+  path convention (`<song_id>/<track>.<ext>`, `stems/` prefix in
+  `record.stems`)
+- SongDetail's Stems section becomes a 7-slot panel: Upload / ▶
+  preview / Replace / ✕ remove per track. Owners only
+
+### 3.3 — Persisted view state  ✅
+
+Per-user localStorage of `{view, selectedSongId, selectedSetlistId}`.
+Reloading drops the user back where they left off
+
+### 3.4 — Library refresh button  ✅
+
+⟳ button next to the title; surfaces freshly-published rows without a
+hard reload
+
+## Phase 4 — Sections + harmony parts  🔜 next
 
 Real arrangement data lands so the mixer's section bar and part-status
 display work for actual songs.
 
-- Pipeline parses MusicXML rehearsal marks (or accepts a structure map)
-  and writes a `sections: Section[]` array into `songs.record` (or a
-  dedicated column, decided at the start of the phase)
-- Pipeline writes `parts: PartLayer[]` from the aligner output
-- Vocal Booth mixer renders real section boundaries + real part-status
-- Pipeline batch-upload for the 7-track stem set (click, band, lead +
-  4 harmonies) instead of one at a time
+- 4.1 ✅ — `mixer-adapter` reads `record.sections: Section[]` and
+  `record.lyrics` when present. Normalizes via core's `sectionLabel` /
+  `sectionShortLabel`. Sorted by `startTime` ascending. Old songs
+  keep the synthetic "Full Song" fallback
+- 4.2 📋 — Pipeline parses MusicXML rehearsal marks (or accepts a
+  structure map) and writes `sections: Section[]` into `songs.record`
+- 4.3 📋 — Pipeline writes `parts: PartLayer[]` from the aligner output
+- 4.4 📋 — Vocal Booth mixer renders real section boundaries + real
+  part-status (already wired adapter-side from 4.1; just needs real
+  producer-side data to verify visually)
+- 4.5 📋 — Pipeline batch-upload for the 7-track stem set (click,
+  band, lead + 4 harmonies) instead of one at a time
 
-## Phase 5 — Charter persistence  📋
+## Phase 5 — Charter persistence  ✅ done
 
-Charter's chord-chart prototype currently saves nothing.
+Charter is now auth-gated and round-trips chord charts through Supabase.
 
-- Port the magic-link auth slice from Vocal Booth (same pattern works
-  for the workspace's `.env.local`)
-- Charter writes chord-chart structure into `songs.record` (likely a
-  `charter` sub-object alongside `summary` / `items` / `stems`)
-- Read path: Charter loads a song's chart from the row; round-trips
-  edits without conflicting with the Pipeline's payload writes (last
-  writer wins per top-level key, or namespaced merge)
-- Print mode preserved from the prototype
+- Magic-link auth ported from Vocal Booth (amber theme to match
+  Charter's accent)
+- `SongPicker` lists every song visible to the user; "+ New chart"
+  creates + opens in one click
+- `saveSongCharter(songId, patch)` updates top-level `title/key/bpm`
+  and merges a `charter` sub-object into `record`. Read-modify-write
+  on `record` so Pipeline's `summary / items / stems / sections /
+  parts` keys are never clobbered
+- ChartFormatter accepts `{ song, onExit }` props (JSDoc-typed);
+  initial state hydrated via `songToCharterState()`. Cloud-save
+  button + "‹ Songs" back affordance in the toolbar. Existing
+  file-export + PDF-print paths unchanged
+- Last-opened song id persisted per-user in localStorage
 
-## Phase 6 — Sharing + setlists  📋
+## Phase 6 — Sharing + setlists  ✅ done
 
-The `song_shares` and `setlists` / `setlist_songs` tables already exist
-with RLS. The UI is missing.
+### 6.1 — Setlists CRUD  ✅
 
-- Vocal Booth: "Share" button on owned songs → email lookup + insert into
-  `song_shares` (optional can_edit toggle)
-- Setlist editor: create a setlist, drag songs in, reorder positions
-- Setlist view replaces the Library home for active-rehearsal context
-  (think "this Sunday's service")
-- Choir-member UX: notification when a setlist is shared with you
+- `lib/setlists.ts` — list/create/rename/delete + `addSongToSetlist`
+  (append at max+1), `removeSongFromSetlist`, `moveSongInSetlist`
+  (neighbor-swap by position)
+- `Setlists.tsx` list view + new-setlist form + ⟳ refresh
+- `SetlistDetail.tsx` — numbered list with ▲/▼/✕ controls, inline
+  song picker showing every visible song not yet in the setlist,
+  click-to-rename header
+- Home gets a third amber tile. SongDetail's back button knows
+  whether the user came from a setlist vs. Library
+
+### 6.2 — Share-by-email  ✅
+
+- New migration `20260615120000_share_lookup.sql` adds a SECURITY
+  DEFINER `find_user_by_email(p_email)` RPC on `auth.users` (granted
+  to `authenticated` only). Applied to remote via `supabase db push`
+- `lib/shares.ts` wraps the RPC + `song_shares` table ops
+- SongDetail's owner view gains a Sharing panel: email + can-edit
+  checkbox + share button, plus a list of existing shares with
+  display_name when available (otherwise user_id) and per-row Revoke
+
+### Out of scope (deferred)
+
+- Drag-to-reorder setlists (▲/▼ is good enough for now)
+- Per-song service-key / lead-vocal overrides on setlist entries
+- Choir-member notification UI when a setlist is shared with you
+- Setlist-as-rehearsal-home (replacing Library default)
 
 ## Phase 7 — Demucs + WhisperX integration  📋
 
