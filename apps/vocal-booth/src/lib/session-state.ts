@@ -8,11 +8,19 @@
  * by returning the home state.
  */
 
-export type PersistedView = 'home' | 'mixer' | 'mixer-song' | 'library' | 'song';
+export type PersistedView =
+  | 'home'
+  | 'mixer'
+  | 'mixer-song'
+  | 'library'
+  | 'song'
+  | 'setlists'
+  | 'setlist';
 
 export type PersistedState = {
   view: PersistedView;
   selectedSongId: string | null;
+  selectedSetlistId: string | null;
 };
 
 const VALID_VIEWS: ReadonlyArray<PersistedView> = [
@@ -21,9 +29,15 @@ const VALID_VIEWS: ReadonlyArray<PersistedView> = [
   'mixer-song',
   'library',
   'song',
+  'setlists',
+  'setlist',
 ];
 
-const DEFAULT_STATE: PersistedState = { view: 'home', selectedSongId: null };
+const DEFAULT_STATE: PersistedState = {
+  view: 'home',
+  selectedSongId: null,
+  selectedSetlistId: null,
+};
 
 function storageKey(userId: string): string {
   return `vocal-booth:state:${userId}`;
@@ -41,7 +55,9 @@ export function loadPersistedState(userId: string): PersistedState {
       : 'home';
     const selectedSongId =
       typeof obj.selectedSongId === 'string' ? obj.selectedSongId : null;
-    return { view, selectedSongId };
+    const selectedSetlistId =
+      typeof obj.selectedSetlistId === 'string' ? obj.selectedSetlistId : null;
+    return { view, selectedSongId, selectedSetlistId };
   } catch {
     return DEFAULT_STATE;
   }

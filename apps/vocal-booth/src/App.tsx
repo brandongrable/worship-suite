@@ -5,17 +5,27 @@ import SignIn from './SignIn';
 import Home from './Home';
 import Library from './Library';
 import SongDetail from './SongDetail';
+import Setlists from './Setlists';
+import SetlistDetail from './SetlistDetail';
 import WorshipMixer from './WorshipMixer.jsx';
 import { fetchSongById, type Song } from './lib/songs';
 import { loadPersistedState, savePersistedState } from './lib/session-state';
 
-type View = 'home' | 'mixer' | 'mixer-song' | 'library' | 'song';
+type View =
+  | 'home'
+  | 'mixer'
+  | 'mixer-song'
+  | 'library'
+  | 'song'
+  | 'setlists'
+  | 'setlist';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<View>('home');
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
+  const [selectedSetlistId, setSelectedSetlistId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,12 +45,14 @@ export default function App() {
               setSelectedSong(song);
               setView(persisted.view);
             } else {
-              // Song was deleted / un-shared since last session.
               setView('home');
             }
           } catch {
             if (!cancelled) setView('home');
           }
+        } else if (persisted.view === 'setlist' && persisted.selectedSetlistId) {
+          setSelectedSetlistId(persisted.selectedSetlistId);
+          setView('setlist');
         } else if (persisted.view !== 'home') {
           setView(persisted.view);
         }
@@ -52,6 +64,7 @@ export default function App() {
       if (!sess) {
         setView('home');
         setSelectedSong(null);
+        setSelectedSetlistId(null);
       }
     });
     return () => {
@@ -60,15 +73,14 @@ export default function App() {
     };
   }, []);
 
-  // Persist view + selected song id whenever they change. Per-user
-  // keying keeps multiple accounts on the same device separate.
   useEffect(() => {
     if (!session) return;
     savePersistedState(session.user.id, {
       view,
       selectedSongId: selectedSong?.id ?? null,
+      selectedSetlistId,
     });
-  }, [view, selectedSong?.id, session?.user.id]);
+  }, [view, selectedSong?.id, selectedSetlistId, session?.user.id]);
 
   if (!ready) {
     return (
@@ -130,10 +142,41 @@ export default function App() {
         ownedByMe={selectedSong.owner_id === session.user.id}
         onBack={() => {
           setSelectedSong(null);
-          setView('library');
+          // If we got here from a setlist, return to it; otherwise to Library.
+          setView(selectedSetlistId ? 'setlist' : 'library');
         }}
         onOpenMixer={() => setView('mixer-song')}
         onUpdated={(next) => setSelectedSong(next)}
+      />
+    );
+  }
+
+  if (view === 'setlists') {
+    return (
+      <Setlists
+        ownerId={session.user.id}
+        onBack={() => setView('home')}
+        onSelect={(id) => {
+          setSelectedSetlistId(id);
+          setView('setlist');
+        }}
+      />
+    );
+  }
+
+  if (view === 'setlist' && selectedSetlistId) {
+    return (
+      <SetlistDetail
+        setlistId={selectedSetlistId}
+        ownerId={session.user.id}
+        onBack={() => {
+          setSelectedSetlistId(null);
+          setView('setlists');
+        }}
+        onOpenSong={(song) => {
+          setSelectedSong(song);
+          setView('song');
+        }}
       />
     );
   }
@@ -143,6 +186,7 @@ export default function App() {
       email={email}
       onOpenMixer={() => setView('mixer')}
       onOpenLibrary={() => setView('library')}
+      onOpenSetlists={() => setView('setlists')}
       onSignOut={() => supabase.auth.signOut()}
     />
   );

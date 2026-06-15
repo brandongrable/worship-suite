@@ -2,13 +2,20 @@ type HomeProps = {
   email: string;
   onOpenMixer: () => void;
   onOpenLibrary: () => void;
+  onOpenSetlists: () => void;
   onSignOut: () => void;
 };
 
 const sansFont = "'DM Sans', sans-serif";
 const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 
-export default function Home({ email, onOpenMixer, onOpenLibrary, onSignOut }: HomeProps) {
+export default function Home({
+  email,
+  onOpenMixer,
+  onOpenLibrary,
+  onOpenSetlists,
+  onSignOut,
+}: HomeProps) {
   return (
     <div
       style={{
@@ -45,6 +52,12 @@ export default function Home({ email, onOpenMixer, onOpenLibrary, onSignOut }: H
             sublabel="Songs from your account · live data"
             onClick={onOpenLibrary}
             accent="#9B6AD8"
+          />
+          <BigButton
+            label="Setlists"
+            sublabel="Ordered groups of songs for a service"
+            onClick={onOpenSetlists}
+            accent="#E8C840"
           />
           <BigButton
             label="Mixer (demo)"
