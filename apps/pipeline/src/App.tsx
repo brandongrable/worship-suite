@@ -32,6 +32,12 @@ type WhisperXResult = {
   json_path: string;
 };
 
+type CacheStatus = {
+  cached: boolean;
+  artifact: string | null;
+  detail: string[];
+};
+
 type ReviewItem = {
   kind: string; // 'low_confidence' | 'long_run' | ...
   word: string;
@@ -187,6 +193,7 @@ export default function App() {
   const [demucsRunning, setDemucsRunning] = useState(false);
   const [demucsResult, setDemucsResult] = useState<DemucsResult | null>(null);
   const [demucsErr, setDemucsErr] = useState<string | null>(null);
+  const [demucsCache, setDemucsCache] = useState<CacheStatus | null>(null);
 
   // Phase 7: WhisperX transcription stage.
   const [whisperxCheck, setWhisperxCheck] = useState<StageTool | null>(null);
@@ -198,6 +205,36 @@ export default function App() {
   const [whisperxRunning, setWhisperxRunning] = useState(false);
   const [whisperxResult, setWhisperxResult] = useState<WhisperXResult | null>(null);
   const [whisperxErr, setWhisperxErr] = useState<string | null>(null);
+  const [whisperxCache, setWhisperxCache] = useState<CacheStatus | null>(null);
+
+  // Auto-probe the cache when the user changes input / output / model.
+  // Cheap: filesystem stat only; no subprocess.
+  useEffect(() => {
+    if (!demucsInput || !demucsOutDir) {
+      setDemucsCache(null);
+      return;
+    }
+    invoke<CacheStatus>('demucs_cache_status', {
+      inputAudio: demucsInput,
+      outputDir: demucsOutDir,
+      model: demucsModel,
+    })
+      .then(setDemucsCache)
+      .catch(() => setDemucsCache(null));
+  }, [demucsInput, demucsOutDir, demucsModel]);
+
+  useEffect(() => {
+    if (!whisperxInput || !whisperxOutDir) {
+      setWhisperxCache(null);
+      return;
+    }
+    invoke<CacheStatus>('whisperx_cache_status', {
+      inputAudio: whisperxInput,
+      outputDir: whisperxOutDir,
+    })
+      .then(setWhisperxCache)
+      .catch(() => setWhisperxCache(null));
+  }, [whisperxInput, whisperxOutDir]);
 
   useEffect(() => {
     invoke<Health>('health_check').then(setHealth).catch((e) => setHealthErr(String(e)));
@@ -275,7 +312,7 @@ export default function App() {
     if (typeof selected === 'string') setWhisperxOutDir(selected);
   }
 
-  async function runDemucs() {
+  async function runDemucs(force = false) {
     if (!demucsInput || !demucsOutDir) return;
     setDemucsRunning(true);
     setDemucsResult(null);
@@ -285,6 +322,7 @@ export default function App() {
         inputAudio: demucsInput,
         outputDir: demucsOutDir,
         model: demucsModel,
+        force,
       });
       setDemucsResult(r);
       // Auto-chain: if a vocals stem was produced, prefill it as
@@ -305,7 +343,7 @@ export default function App() {
     }
   }
 
-  async function runWhisperX() {
+  async function runWhisperX(force = false) {
     if (!whisperxInput || !whisperxOutDir) return;
     setWhisperxRunning(true);
     setWhisperxResult(null);
@@ -316,6 +354,7 @@ export default function App() {
         outputDir: whisperxOutDir,
         model: whisperxModel,
         language: whisperxLanguage,
+        force,
       });
       setWhisperxResult(r);
       // Auto-chain: produced JSON feeds the aligner.
@@ -548,14 +587,32 @@ export default function App() {
             </select>
           </div>
         </div>
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
           <button
             className="btn primary"
-            onClick={runDemucs}
+            onClick={() => runDemucs(false)}
             disabled={!demucsInput || !demucsOutDir || demucsRunning}
           >
-            {demucsRunning ? 'Separating…' : 'Run Demucs'}
+            {demucsRunning
+              ? 'Separating…'
+              : demucsCache?.cached
+                ? 'Use cached'
+                : 'Run Demucs'}
           </button>
+          {demucsCache?.cached && (
+            <>
+              <span style={{ fontSize: 12, color: '#5B8C3E', fontFamily: 'monospace' }}>
+                ✓ cached at {demucsCache.artifact}
+              </span>
+              <button
+                className="btn"
+                onClick={() => runDemucs(true)}
+                disabled={demucsRunning}
+              >
+                Re-run
+              </button>
+            </>
+          )}
         </div>
         {demucsErr && <div className="error">{demucsErr}</div>}
         {demucsResult && (
@@ -619,14 +676,32 @@ export default function App() {
             />
           </div>
         </div>
-        <div style={{ marginTop: 12 }}>
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
           <button
             className="btn primary"
-            onClick={runWhisperX}
+            onClick={() => runWhisperX(false)}
             disabled={!whisperxInput || !whisperxOutDir || whisperxRunning}
           >
-            {whisperxRunning ? 'Transcribing…' : 'Run WhisperX'}
+            {whisperxRunning
+              ? 'Transcribing…'
+              : whisperxCache?.cached
+                ? 'Use cached'
+                : 'Run WhisperX'}
           </button>
+          {whisperxCache?.cached && (
+            <>
+              <span style={{ fontSize: 12, color: '#5B8C3E', fontFamily: 'monospace' }}>
+                ✓ cached: {whisperxCache.artifact}
+              </span>
+              <button
+                className="btn"
+                onClick={() => runWhisperX(true)}
+                disabled={whisperxRunning}
+              >
+                Re-run
+              </button>
+            </>
+          )}
         </div>
         {whisperxErr && <div className="error">{whisperxErr}</div>}
         {whisperxResult && (

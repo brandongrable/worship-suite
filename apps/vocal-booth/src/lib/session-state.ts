@@ -71,3 +71,26 @@ export function savePersistedState(userId: string, state: PersistedState): void 
     // user just won't get the restore-on-launch behavior.
   }
 }
+
+/**
+ * Whether this user has dismissed the first-run welcome panel on
+ * Home. Per-user keyed so a producer + choir member sharing the
+ * same browser each see their own welcome once.
+ */
+const INTRO_KEY = (userId: string) => `vocal-booth:intro-seen:${userId}`;
+
+export function hasSeenIntro(userId: string): boolean {
+  try {
+    return localStorage.getItem(INTRO_KEY(userId)) === '1';
+  } catch {
+    return true; // assume seen so we don't show twice
+  }
+}
+
+export function markIntroSeen(userId: string): void {
+  try {
+    localStorage.setItem(INTRO_KEY(userId), '1');
+  } catch {
+    // No-op
+  }
+}

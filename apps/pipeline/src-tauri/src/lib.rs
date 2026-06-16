@@ -126,6 +126,72 @@ struct DemucsResult {
     stems: Vec<String>,
 }
 
+/// Compute Demucs's expected output directory for a given input +
+/// model: `<output_dir>/<model>/<input_stem>/`. Used by both
+/// `demucs_separate` (to walk the result) and `demucs_cache_status`
+/// (to detect whether a prior run already produced output we can
+/// skip re-computing).
+fn demucs_stems_dir(input_audio: &str, output_dir: &str, model: &str) -> PathBuf {
+    let stem_basename = PathBuf::from(input_audio)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    PathBuf::from(output_dir).join(model).join(&stem_basename)
+}
+
+fn list_demucs_stems(dir: &std::path::Path) -> Vec<String> {
+    fs::read_dir(dir)
+        .ok()
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
+                .map(|e| e.path().to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+struct CacheStatus {
+    cached: bool,
+    /// When cached, the absolute path(s) to the existing artifact(s).
+    /// For Demucs this is the stems directory + the wav files inside;
+    /// for WhisperX it's the JSON file.
+    artifact: Option<String>,
+    /// Extra detail the UI can surface: stem file paths, the JSON's
+    /// modified time, etc. Empty when not cached.
+    detail: Vec<String>,
+}
+
+/// Cheap pre-flight: does a prior `demucs_separate` run already
+/// exist for this (input, output_dir, model) triple? The UI can use
+/// the result to short-circuit the Run button and offer "Re-run".
+#[tauri::command]
+fn demucs_cache_status(
+    input_audio: String,
+    output_dir: String,
+    model: Option<String>,
+) -> CacheStatus {
+    let model = model.unwrap_or_else(|| "htdemucs".to_string());
+    let stems_dir = demucs_stems_dir(&input_audio, &output_dir, &model);
+    let stems = list_demucs_stems(&stems_dir);
+    // Demucs always produces 4 stems (drums/bass/other/vocals); count
+    // those specifically rather than any wav, in case the dir held
+    // unrelated audio.
+    let has_vocals = stems.iter().any(|p| p.to_lowercase().ends_with("vocals.wav"));
+    if has_vocals {
+        CacheStatus {
+            cached: true,
+            artifact: Some(stems_dir.to_string_lossy().to_string()),
+            detail: stems,
+        }
+    } else {
+        CacheStatus { cached: false, artifact: None, detail: vec![] }
+    }
+}
+
 /// Run Demucs source separation as a Python subprocess to split a
 /// mixed recording into `vocals.wav`, `drums.wav`, `bass.wav`, and
 /// `other.wav`. Producer can then send `vocals.wav` to WhisperX +
@@ -134,6 +200,12 @@ struct DemucsResult {
 /// Default model is `htdemucs` (the standard high-quality choice);
 /// override with the `model` parameter when the user picks one of
 /// `htdemucs_ft`, `mdx_extra`, etc. in the UI.
+///
+/// When the expected output already exists and `force` is false (or
+/// unset), this skips the subprocess entirely and returns a
+/// synthetic success — the producer can re-run the same input + model
+/// across UI sessions without recomputing a 30-second separation.
+/// Pass `force: true` to override.
 ///
 /// Demucs writes to `<output_dir>/<model>/<input_stem>/*.wav` —
 /// after a successful run, we walk that directory and return the
@@ -144,8 +216,29 @@ fn demucs_separate(
     input_audio: String,
     output_dir: String,
     model: Option<String>,
+    force: Option<bool>,
 ) -> Result<DemucsResult, String> {
     let model = model.unwrap_or_else(|| "htdemucs".to_string());
+    let force = force.unwrap_or(false);
+    let stems_dir = demucs_stems_dir(&input_audio, &output_dir, &model);
+
+    // Cache hit short-circuit: if vocals.wav already exists at the
+    // expected path and the caller didn't ask for a re-run, return
+    // immediately with the existing stems.
+    if !force {
+        let existing = list_demucs_stems(&stems_dir);
+        if existing.iter().any(|p| p.to_lowercase().ends_with("vocals.wav")) {
+            return Ok(DemucsResult {
+                success: true,
+                exit_code: Some(0),
+                stdout: format!("cached: {}", stems_dir.to_string_lossy()),
+                stderr: String::new(),
+                output_dir: stems_dir.to_string_lossy().to_string(),
+                stems: existing,
+            });
+        }
+    }
+
     let mut cmd = Command::new("python3");
     cmd.arg("-m")
         .arg("demucs")
@@ -158,22 +251,7 @@ fn demucs_separate(
         .output()
         .map_err(|e| format!("failed to spawn python3: {}", e))?;
 
-    let stem_basename = PathBuf::from(&input_audio)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
-    let stems_dir = PathBuf::from(&output_dir).join(&model).join(&stem_basename);
-    let stems: Vec<String> = fs::read_dir(&stems_dir)
-        .ok()
-        .map(|entries| {
-            entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
-                .map(|e| e.path().to_string_lossy().to_string())
-                .collect()
-        })
-        .unwrap_or_default();
+    let stems = list_demucs_stems(&stems_dir);
 
     Ok(DemucsResult {
         success: output.status.success(),
@@ -196,6 +274,29 @@ struct WhisperXResult {
     json_path: String,
 }
 
+fn whisperx_json_path(input_audio: &str, output_dir: &str) -> PathBuf {
+    let basename = PathBuf::from(input_audio)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    PathBuf::from(output_dir).join(format!("{}.json", basename))
+}
+
+#[tauri::command]
+fn whisperx_cache_status(input_audio: String, output_dir: String) -> CacheStatus {
+    let json_path = whisperx_json_path(&input_audio, &output_dir);
+    if json_path.exists() {
+        CacheStatus {
+            cached: true,
+            artifact: Some(json_path.to_string_lossy().to_string()),
+            detail: vec![],
+        }
+    } else {
+        CacheStatus { cached: false, artifact: None, detail: vec![] }
+    }
+}
+
 /// Run WhisperX as a subprocess to transcribe an audio file (usually
 /// the vocals stem coming out of Demucs) into a `word_segments` JSON
 /// — the input shape the aligner expects.
@@ -204,15 +305,34 @@ struct WhisperXResult {
 /// `<input_stem>.json` into `output_dir`. Returns the absolute path
 /// so the caller can hand it straight to `run_aligner` without
 /// reproducing the naming.
+///
+/// Cached behavior mirrors `demucs_separate`: if the expected JSON
+/// already exists at the output path and `force` is false, skip the
+/// subprocess and return the existing file. Re-runs cost the full
+/// WhisperX latency.
 #[tauri::command]
 fn whisperx_transcribe(
     input_audio: String,
     output_dir: String,
     model: Option<String>,
     language: Option<String>,
+    force: Option<bool>,
 ) -> Result<WhisperXResult, String> {
     let model = model.unwrap_or_else(|| "base".to_string());
     let lang = language.unwrap_or_else(|| "en".to_string());
+    let force = force.unwrap_or(false);
+
+    let json_path = whisperx_json_path(&input_audio, &output_dir);
+    if !force && json_path.exists() {
+        return Ok(WhisperXResult {
+            success: true,
+            exit_code: Some(0),
+            stdout: format!("cached: {}", json_path.to_string_lossy()),
+            stderr: String::new(),
+            json_path: json_path.to_string_lossy().to_string(),
+        });
+    }
+
     let mut cmd = Command::new("whisperx");
     cmd.arg(&input_audio)
         .arg("--output_dir")
@@ -226,13 +346,6 @@ fn whisperx_transcribe(
     let output = cmd
         .output()
         .map_err(|e| format!("failed to spawn whisperx: {}", e))?;
-
-    let basename = PathBuf::from(&input_audio)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
-    let json_path = PathBuf::from(&output_dir).join(format!("{}.json", basename));
 
     Ok(WhisperXResult {
         success: output.status.success(),
@@ -791,7 +904,9 @@ pub fn run() {
             python_check,
             run_aligner,
             demucs_separate,
+            demucs_cache_status,
             whisperx_transcribe,
+            whisperx_cache_status,
             demucs_check,
             whisperx_check,
             load_review,

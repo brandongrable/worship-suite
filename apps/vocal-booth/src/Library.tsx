@@ -75,7 +75,29 @@ export default function Library({
         {songs === null ? (
           <Muted>Loading…</Muted>
         ) : songs.length === 0 ? (
-          <Muted>No songs yet. Create one above.</Muted>
+          <div
+            style={{
+              padding: 20,
+              borderRadius: 10,
+              background: 'rgba(155,106,216,0.04)',
+              border: '1px dashed rgba(155,106,216,0.25)',
+              fontSize: 13,
+              color: 'rgba(255,255,255,0.6)',
+              lineHeight: 1.6,
+            }}
+          >
+            No songs in your library yet. Two ways one lands here:
+            <ul style={{ margin: '8px 0 0 18px', padding: 0 }}>
+              <li>
+                Create a new song above and upload its stems — you become
+                the owner.
+              </li>
+              <li>
+                A worship leader shares a song with you (their email lookup
+                resolves to your account) — it'll appear here automatically.
+              </li>
+            </ul>
+          </div>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
             {songs.map((song) => (

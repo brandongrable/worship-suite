@@ -1,5 +1,9 @@
+import { useState } from 'react';
+import { hasSeenIntro, markIntroSeen } from './lib/session-state';
+
 type HomeProps = {
   email: string;
+  userId: string;
   unviewedShares?: number;
   onOpenMixer: () => void;
   onOpenLibrary: () => void;
@@ -12,12 +16,18 @@ const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 
 export default function Home({
   email,
+  userId,
   unviewedShares = 0,
   onOpenMixer,
   onOpenLibrary,
   onOpenSetlists,
   onSignOut,
 }: HomeProps) {
+  const [showIntro, setShowIntro] = useState(() => !hasSeenIntro(userId));
+  function dismissIntro() {
+    markIntroSeen(userId);
+    setShowIntro(false);
+  }
   return (
     <div
       style={{
@@ -32,7 +42,7 @@ export default function Home({
         padding: 24,
       }}
     >
-      <div style={{ maxWidth: 360, width: '100%' }}>
+      <div style={{ maxWidth: 380, width: '100%' }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 4, textAlign: 'center' }}>
           Vocal Booth
         </h1>
@@ -47,6 +57,77 @@ export default function Home({
         >
           {email}
         </div>
+
+        {showIntro && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: '14px 16px',
+              borderRadius: 12,
+              background:
+                'linear-gradient(135deg, rgba(155,106,216,0.08) 0%, rgba(232,200,64,0.05) 100%)',
+              border: '1px solid rgba(155,106,216,0.2)',
+              position: 'relative',
+            }}
+          >
+            <button
+              onClick={dismissIntro}
+              aria-label="Dismiss"
+              style={{
+                position: 'absolute',
+                top: 8,
+                right: 8,
+                background: 'transparent',
+                border: 'none',
+                color: 'rgba(255,255,255,0.4)',
+                fontSize: 14,
+                cursor: 'pointer',
+                padding: 2,
+                lineHeight: 1,
+              }}
+            >
+              ✕
+            </button>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: '#9B6AD8',
+                letterSpacing: '0.1em',
+                fontFamily: monoFont,
+                marginBottom: 6,
+              }}
+            >
+              WELCOME
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                color: '#fff',
+                fontFamily: sansFont,
+                lineHeight: 1.5,
+                marginBottom: 10,
+              }}
+            >
+              Practice your part along with your choir.
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: 'rgba(255,255,255,0.6)',
+                fontFamily: sansFont,
+                lineHeight: 1.6,
+              }}
+            >
+              <strong style={{ color: '#9B6AD8' }}>My Library</strong> holds
+              songs you upload + songs shared with you.{' '}
+              <strong style={{ color: '#E8C840' }}>Setlists</strong> group
+              songs for an upcoming service. Open any song in the{' '}
+              <strong>Mixer</strong> to play stems, see your part on the
+              piano roll, and follow along.
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'grid', gap: 10 }}>
           <BigButton

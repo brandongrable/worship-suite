@@ -199,6 +199,7 @@ export default function App() {
   return (
     <Home
       email={email}
+      userId={session.user.id}
       unviewedShares={unviewedShares}
       onOpenMixer={() => setView('mixer')}
       onOpenLibrary={() => setView('library')}
