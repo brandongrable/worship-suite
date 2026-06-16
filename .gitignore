@@ -42,6 +42,18 @@ aligner/
 # scratch space (1.3GB of venvs + raw audio) — never tracked
 scratch/
 
+# Demucs separation output — derived from a source recording, never
+# track the bytes (GitHub flags anything > 50MB). The model name
+# becomes the directory name under the producer's chosen output dir.
+**/htdemucs/
+**/htdemucs_ft/
+**/mdx_extra/
+**/mdx_extra_q/
+**/mdx/
+
+# WhisperX JSON output — derived from an audio input
+**/*_whisperx.json
+
 # Supabase CLI internal cache
 supabase/.temp/
 supabase/.branches/
