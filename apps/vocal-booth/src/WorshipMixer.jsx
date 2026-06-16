@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { getKeyOptions, formatTime } from "@worship/core";
 import { supabase } from "./lib/supabase";
 import { songToMixerSong } from "./lib/mixer-adapter";
+import PianoRoll from "./PianoRoll.jsx";
 
 /* ── Color System ── */
 const PART_COLORS = { soprano: "#E8C840", alto: "#D94545", tenor: "#4FBCD0", baritone: "#5B8C3E" };
@@ -1056,6 +1057,12 @@ export default function WorshipMixer({ initialSong = null, onExit = null }) {
 
           <div style={{ padding: "10px 0 4px", display: "flex", flexDirection: "column", gap: 4 }}>
             <SectionalWaveform sections={sections} progress={progress} duration={activeSong.duration} onSectionTap={handleSectionTap} activeSection={activeSection} loopSection={loopSection} onLoopToggle={(sec) => { if (!sec) return; setLoopSection(loopSection?.id === sec.id ? null : sec); }} queuedSection={queuedSection} loadedTracks={engine.loadedTracks} />
+            <PianoRoll
+              notes={activeSong.parts?.[0]?.notes ?? []}
+              currentTime={engine.currentTime}
+              activeSection={activeSection}
+              myPart={myPart}
+            />
             <div style={{ textAlign: "center", minHeight: 22, paddingTop: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
               {activeSection && (() => {
                 const st = HARMONY_PARTS.map((p) => activeSection.partStatus[p]);

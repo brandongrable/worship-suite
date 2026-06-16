@@ -35,6 +35,21 @@ export type MixerSection = {
 
 export type MixerLyric = { start: number; end: number; text: string };
 
+export type MixerPartNote = {
+  col: number;
+  sectionId: string;
+  onset: number;
+  duration: number;
+  pitch: number;
+  syllable?: string;
+  confidence?: number;
+};
+
+export type MixerPart = {
+  part: string;
+  notes: MixerPartNote[];
+};
+
 export type MixerSong = {
   id: string;
   title: string;
@@ -45,12 +60,14 @@ export type MixerSong = {
   duration: number;
   sections: MixerSection[];
   lyrics: MixerLyric[];
+  parts: MixerPart[];
 };
 
 type RecordShape = {
   summary?: { beats_per_bar?: number };
   sections?: unknown;
   lyrics?: unknown;
+  parts?: unknown;
 };
 
 const HARMONY_KEYS = ['soprano', 'alto', 'tenor', 'baritone'] as const;
@@ -80,7 +97,47 @@ export function songToMixerSong(row: Song, durationSec: number): MixerSong {
     duration: durationSec,
     sections: buildSections(record.sections, durationSec),
     lyrics: buildLyrics(record.lyrics),
+    parts: buildParts(record.parts),
   };
+}
+
+function buildParts(raw: unknown): MixerPart[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((p): MixerPart | null => {
+      if (!p || typeof p !== 'object') return null;
+      const layer = p as { part?: unknown; notes?: unknown };
+      if (typeof layer.part !== 'string') return null;
+      if (!Array.isArray(layer.notes)) return null;
+      const notes = layer.notes
+        .map((n): MixerPartNote | null => {
+          if (!n || typeof n !== 'object') return null;
+          const note = n as Partial<MixerPartNote>;
+          if (
+            typeof note.col !== 'number' ||
+            typeof note.onset !== 'number' ||
+            typeof note.duration !== 'number' ||
+            typeof note.pitch !== 'number'
+          ) {
+            return null;
+          }
+          return {
+            col: note.col,
+            sectionId: typeof note.sectionId === 'string' ? note.sectionId : '',
+            onset: note.onset,
+            duration: note.duration,
+            pitch: note.pitch,
+            syllable:
+              typeof note.syllable === 'string' ? note.syllable : undefined,
+            confidence:
+              typeof note.confidence === 'number' ? note.confidence : undefined,
+          };
+        })
+        .filter((n): n is MixerPartNote => n !== null)
+        .sort((a, b) => a.onset - b.onset);
+      return { part: layer.part, notes };
+    })
+    .filter((p): p is MixerPart => p !== null);
 }
 
 function buildSections(raw: unknown, durationSec: number): MixerSection[] {
