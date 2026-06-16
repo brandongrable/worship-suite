@@ -190,6 +190,9 @@ export default function App() {
   const [demucsInput, setDemucsInput] = useState<string | null>(null);
   const [demucsOutDir, setDemucsOutDir] = useState<string | null>(null);
   const [demucsModel, setDemucsModel] = useState<string>('htdemucs');
+  const [demucsMode, setDemucsMode] = useState<'two_stems_vocals' | 'four_stems'>(
+    'two_stems_vocals',
+  );
   const [demucsRunning, setDemucsRunning] = useState(false);
   const [demucsResult, setDemucsResult] = useState<DemucsResult | null>(null);
   const [demucsErr, setDemucsErr] = useState<string | null>(null);
@@ -322,6 +325,7 @@ export default function App() {
         inputAudio: demucsInput,
         outputDir: demucsOutDir,
         model: demucsModel,
+        mode: demucsMode,
         force,
       });
       setDemucsResult(r);
@@ -584,6 +588,20 @@ export default function App() {
               {['htdemucs', 'htdemucs_ft', 'mdx_extra', 'mdx_extra_q'].map((m) => (
                 <option key={m} value={m}>{m}</option>
               ))}
+            </select>
+          </div>
+          <div className="picker-row">
+            <span className="picker-label">stems</span>
+            <select
+              className="picker-input"
+              value={demucsMode}
+              disabled={demucsRunning}
+              onChange={(e) =>
+                setDemucsMode(e.target.value as 'two_stems_vocals' | 'four_stems')
+              }
+            >
+              <option value="two_stems_vocals">vocals + instrumental (2)</option>
+              <option value="four_stems">drums + bass + other + vocals (4)</option>
             </select>
           </div>
         </div>

@@ -135,6 +135,12 @@ export function guessTrackFromFilename(filename: string): string | null {
   if (base.includes('click') || base.includes('cuet') || base.includes('cue ')) {
     return 'click';
   }
+  // Demucs 2-stem mode writes `no_vocals.wav` (the instrumental).
+  // Check before "vocal" / "lead" so the negation doesn't get mis-
+  // mapped as a vocal stem.
+  if (base.includes('no_vocal') || base.includes('no-vocal') || base.includes('novocal')) {
+    return 'band';
+  }
   // Harmony parts before "lead/vocal" so "Soprano (Melody Vocal)"
   // resolves to soprano, not lead.
   if (base.includes('sopran') || /(?:^|[^a-z])sop(?:$|[^a-z])/.test(base)) {

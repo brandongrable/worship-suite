@@ -215,14 +215,23 @@ fn demucs_cache_status(
     }
 }
 
-/// Run Demucs source separation as a Python subprocess to split a
-/// mixed recording into `vocals.wav`, `drums.wav`, `bass.wav`, and
-/// `other.wav`. Producer can then send `vocals.wav` to WhisperX +
-/// the aligner, and merge `drums/bass/other` for a band-only stem.
+/// Run Demucs source separation as a Python subprocess.
 ///
-/// Default model is `htdemucs` (the standard high-quality choice);
-/// override with the `model` parameter when the user picks one of
-/// `htdemucs_ft`, `mdx_extra`, etc. in the UI.
+/// `mode` controls the stem layout:
+///
+///   - `"two_stems_vocals"` (default) — passes `--two-stems vocals`,
+///     producing exactly `vocals.wav` + `no_vocals.wav`. The latter
+///     is the instrumental (everything that isn't the vocal). Fast,
+///     simple, and the right call when the producer just wants a
+///     vocal/band split.
+///   - `"four_stems"` — Demucs's default behavior: produces
+///     `vocals.wav`, `drums.wav`, `bass.wav`, `other.wav`. Use when
+///     the producer wants to mix the band stems independently.
+///
+/// `model` is the Demucs model name (`htdemucs` default, plus
+/// `htdemucs_ft` / `mdx_extra` / `mdx_extra_q` as common
+/// alternatives). Different models can produce different stem sets
+/// but the two modes above are stable across all four.
 ///
 /// When the expected output already exists and `force` is false (or
 /// unset), this skips the subprocess entirely and returns a
@@ -239,9 +248,11 @@ fn demucs_separate(
     input_audio: String,
     output_dir: String,
     model: Option<String>,
+    mode: Option<String>,
     force: Option<bool>,
 ) -> Result<DemucsResult, String> {
     let model = model.unwrap_or_else(|| "htdemucs".to_string());
+    let mode = mode.unwrap_or_else(|| "two_stems_vocals".to_string());
     let force = force.unwrap_or(false);
     let stems_dir = demucs_stems_dir(&input_audio, &output_dir, &model);
 
@@ -268,8 +279,11 @@ fn demucs_separate(
         .arg("-n")
         .arg(&model)
         .arg("-o")
-        .arg(&output_dir)
-        .arg(&input_audio);
+        .arg(&output_dir);
+    if mode == "two_stems_vocals" {
+        cmd.arg("--two-stems").arg("vocals");
+    }
+    cmd.arg(&input_audio);
     let output = cmd
         .output()
         .map_err(|e| format!("failed to spawn python3: {}", e))?;
