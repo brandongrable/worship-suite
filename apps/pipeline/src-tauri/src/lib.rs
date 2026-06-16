@@ -111,6 +111,208 @@ fn run_aligner(
     })
 }
 
+#[derive(Serialize)]
+struct DemucsResult {
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    /// Where Demucs wrote its `<model>/<song>/` stem folder. Empty
+    /// when the run failed before producing output.
+    output_dir: String,
+    /// Absolute paths to the extracted stem files (`vocals.wav`,
+    /// `drums.wav`, `bass.wav`, `other.wav`). Empty when none could
+    /// be found — caller falls back to reading stderr.
+    stems: Vec<String>,
+}
+
+/// Run Demucs source separation as a Python subprocess to split a
+/// mixed recording into `vocals.wav`, `drums.wav`, `bass.wav`, and
+/// `other.wav`. Producer can then send `vocals.wav` to WhisperX +
+/// the aligner, and merge `drums/bass/other` for a band-only stem.
+///
+/// Default model is `htdemucs` (the standard high-quality choice);
+/// override with the `model` parameter when the user picks one of
+/// `htdemucs_ft`, `mdx_extra`, etc. in the UI.
+///
+/// Demucs writes to `<output_dir>/<model>/<input_stem>/*.wav` —
+/// after a successful run, we walk that directory and return the
+/// concrete file paths so the UI doesn't need to reproduce the
+/// naming convention.
+#[tauri::command]
+fn demucs_separate(
+    input_audio: String,
+    output_dir: String,
+    model: Option<String>,
+) -> Result<DemucsResult, String> {
+    let model = model.unwrap_or_else(|| "htdemucs".to_string());
+    let mut cmd = Command::new("python3");
+    cmd.arg("-m")
+        .arg("demucs")
+        .arg("-n")
+        .arg(&model)
+        .arg("-o")
+        .arg(&output_dir)
+        .arg(&input_audio);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to spawn python3: {}", e))?;
+
+    let stem_basename = PathBuf::from(&input_audio)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let stems_dir = PathBuf::from(&output_dir).join(&model).join(&stem_basename);
+    let stems: Vec<String> = fs::read_dir(&stems_dir)
+        .ok()
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("wav"))
+                .map(|e| e.path().to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(DemucsResult {
+        success: output.status.success(),
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        output_dir: stems_dir.to_string_lossy().to_string(),
+        stems,
+    })
+}
+
+#[derive(Serialize)]
+struct WhisperXResult {
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    /// Path to the produced `<input_stem>.json` file (the same shape
+    /// the aligner already consumes).
+    json_path: String,
+}
+
+/// Run WhisperX as a subprocess to transcribe an audio file (usually
+/// the vocals stem coming out of Demucs) into a `word_segments` JSON
+/// — the input shape the aligner expects.
+///
+/// Defaults to model `base` and language `en`. WhisperX writes
+/// `<input_stem>.json` into `output_dir`. Returns the absolute path
+/// so the caller can hand it straight to `run_aligner` without
+/// reproducing the naming.
+#[tauri::command]
+fn whisperx_transcribe(
+    input_audio: String,
+    output_dir: String,
+    model: Option<String>,
+    language: Option<String>,
+) -> Result<WhisperXResult, String> {
+    let model = model.unwrap_or_else(|| "base".to_string());
+    let lang = language.unwrap_or_else(|| "en".to_string());
+    let mut cmd = Command::new("whisperx");
+    cmd.arg(&input_audio)
+        .arg("--output_dir")
+        .arg(&output_dir)
+        .arg("--output_format")
+        .arg("json")
+        .arg("--model")
+        .arg(&model)
+        .arg("--language")
+        .arg(&lang);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to spawn whisperx: {}", e))?;
+
+    let basename = PathBuf::from(&input_audio)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let json_path = PathBuf::from(&output_dir).join(format!("{}.json", basename));
+
+    Ok(WhisperXResult {
+        success: output.status.success(),
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        json_path: json_path.to_string_lossy().to_string(),
+    })
+}
+
+#[derive(Serialize)]
+struct StageTool {
+    found: bool,
+    version: Option<String>,
+    error: Option<String>,
+}
+
+/// Sanity-check that Demucs is installed and importable. Surfaces in
+/// the Pipeline UI so the producer knows whether to `pip install
+/// demucs` before kicking off a separation run.
+#[tauri::command]
+fn demucs_check() -> StageTool {
+    match Command::new("python3")
+        .args(["-c", "import demucs; print(demucs.__version__)"])
+        .output()
+    {
+        Ok(out) if out.status.success() => StageTool {
+            found: true,
+            version: Some(String::from_utf8_lossy(&out.stdout).trim().to_string()),
+            error: None,
+        },
+        Ok(out) => StageTool {
+            found: false,
+            version: None,
+            error: Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        },
+        Err(e) => StageTool {
+            found: false,
+            version: None,
+            error: Some(format!("could not run python3: {}", e)),
+        },
+    }
+}
+
+/// Sanity-check that WhisperX is on PATH. Uses `whisperx --help` and
+/// grabs the first line of stdout as a coarse version proxy (WhisperX
+/// doesn't print a clean `--version` today).
+#[tauri::command]
+fn whisperx_check() -> StageTool {
+    match Command::new("whisperx").arg("--help").output() {
+        Ok(out) if out.status.success() => {
+            let first_line = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            StageTool {
+                found: true,
+                version: if first_line.is_empty() {
+                    Some("installed".to_string())
+                } else {
+                    Some(first_line)
+                },
+                error: None,
+            }
+        }
+        Ok(out) => StageTool {
+            found: false,
+            version: None,
+            error: Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        },
+        Err(e) => StageTool {
+            found: false,
+            version: None,
+            error: Some(format!("could not spawn whisperx: {}", e)),
+        },
+    }
+}
+
 /// Load and parse the sidecar review JSON the aligner emits next to
 /// the MusicXML output. We don't type-check the shape on the Rust
 /// side — TypeScript on the frontend has the authoritative schema and
@@ -588,6 +790,10 @@ pub fn run() {
             health_check,
             python_check,
             run_aligner,
+            demucs_separate,
+            whisperx_transcribe,
+            demucs_check,
+            whisperx_check,
             load_review,
             publish_config,
             publish_song,

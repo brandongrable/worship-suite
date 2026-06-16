@@ -6,12 +6,30 @@ import './App.css';
 
 type Health = { ok: boolean; rust: string };
 type PythonInfo = { found: boolean; version: string | null; error: string | null };
+type StageTool = { found: boolean; version: string | null; error: string | null };
 type AlignerResult = {
   success: boolean;
   exit_code: number | null;
   stdout: string;
   stderr: string;
   out_path: string;
+};
+
+type DemucsResult = {
+  success: boolean;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  output_dir: string;
+  stems: string[];
+};
+
+type WhisperXResult = {
+  success: boolean;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  json_path: string;
 };
 
 type ReviewItem = {
@@ -160,6 +178,27 @@ export default function App() {
     Array<{ track: string; storage_key: string; bytes: number }>
   >([]);
 
+  // Phase 7: Demucs source-separation stage.
+  const [demucsCheck, setDemucsCheck] = useState<StageTool | null>(null);
+  const [demucsChecking, setDemucsChecking] = useState(false);
+  const [demucsInput, setDemucsInput] = useState<string | null>(null);
+  const [demucsOutDir, setDemucsOutDir] = useState<string | null>(null);
+  const [demucsModel, setDemucsModel] = useState<string>('htdemucs');
+  const [demucsRunning, setDemucsRunning] = useState(false);
+  const [demucsResult, setDemucsResult] = useState<DemucsResult | null>(null);
+  const [demucsErr, setDemucsErr] = useState<string | null>(null);
+
+  // Phase 7: WhisperX transcription stage.
+  const [whisperxCheck, setWhisperxCheck] = useState<StageTool | null>(null);
+  const [whisperxChecking, setWhisperxChecking] = useState(false);
+  const [whisperxInput, setWhisperxInput] = useState<string | null>(null);
+  const [whisperxOutDir, setWhisperxOutDir] = useState<string | null>(null);
+  const [whisperxModel, setWhisperxModel] = useState<string>('base');
+  const [whisperxLanguage, setWhisperxLanguage] = useState<string>('en');
+  const [whisperxRunning, setWhisperxRunning] = useState(false);
+  const [whisperxResult, setWhisperxResult] = useState<WhisperXResult | null>(null);
+  const [whisperxErr, setWhisperxErr] = useState<string | null>(null);
+
   useEffect(() => {
     invoke<Health>('health_check').then(setHealth).catch((e) => setHealthErr(String(e)));
     invoke<PublishConfig>('publish_config').then(setPublishCfg).catch(() => {});
@@ -185,6 +224,106 @@ export default function App() {
       setPythonErr(String(e));
     } finally {
       setPythonChecking(false);
+    }
+  }
+
+  async function detectDemucs() {
+    setDemucsChecking(true);
+    try {
+      setDemucsCheck(await invoke<StageTool>('demucs_check'));
+    } catch (e) {
+      setDemucsCheck({ found: false, version: null, error: String(e) });
+    } finally {
+      setDemucsChecking(false);
+    }
+  }
+
+  async function detectWhisperX() {
+    setWhisperxChecking(true);
+    try {
+      setWhisperxCheck(await invoke<StageTool>('whisperx_check'));
+    } catch (e) {
+      setWhisperxCheck({ found: false, version: null, error: String(e) });
+    } finally {
+      setWhisperxChecking(false);
+    }
+  }
+
+  async function pickDemucsInput() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'] }],
+    });
+    if (typeof selected === 'string') setDemucsInput(selected);
+  }
+
+  async function pickDemucsOutDir() {
+    const selected = await openDialog({ directory: true, multiple: false });
+    if (typeof selected === 'string') setDemucsOutDir(selected);
+  }
+
+  async function pickWhisperXInput() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'] }],
+    });
+    if (typeof selected === 'string') setWhisperxInput(selected);
+  }
+
+  async function pickWhisperXOutDir() {
+    const selected = await openDialog({ directory: true, multiple: false });
+    if (typeof selected === 'string') setWhisperxOutDir(selected);
+  }
+
+  async function runDemucs() {
+    if (!demucsInput || !demucsOutDir) return;
+    setDemucsRunning(true);
+    setDemucsResult(null);
+    setDemucsErr(null);
+    try {
+      const r = await invoke<DemucsResult>('demucs_separate', {
+        inputAudio: demucsInput,
+        outputDir: demucsOutDir,
+        model: demucsModel,
+      });
+      setDemucsResult(r);
+      // Auto-chain: if a vocals stem was produced, prefill it as
+      // WhisperX input + default the WhisperX output dir to the
+      // same parent.
+      if (r.success) {
+        const vocals = r.stems.find((p) => /vocals\.wav$/i.test(p));
+        if (vocals && !whisperxInput) setWhisperxInput(vocals);
+        if (vocals && !whisperxOutDir) {
+          const sep = Math.max(vocals.lastIndexOf('/'), vocals.lastIndexOf('\\'));
+          if (sep > 0) setWhisperxOutDir(vocals.slice(0, sep));
+        }
+      }
+    } catch (e) {
+      setDemucsErr(String(e));
+    } finally {
+      setDemucsRunning(false);
+    }
+  }
+
+  async function runWhisperX() {
+    if (!whisperxInput || !whisperxOutDir) return;
+    setWhisperxRunning(true);
+    setWhisperxResult(null);
+    setWhisperxErr(null);
+    try {
+      const r = await invoke<WhisperXResult>('whisperx_transcribe', {
+        inputAudio: whisperxInput,
+        outputDir: whisperxOutDir,
+        model: whisperxModel,
+        language: whisperxLanguage,
+      });
+      setWhisperxResult(r);
+      // Auto-chain: produced JSON feeds the aligner.
+      if (r.success && !json) setJson(r.json_path);
+    } catch (e) {
+      setWhisperxErr(String(e));
+    } finally {
+      setWhisperxRunning(false);
     }
   }
 
@@ -374,6 +513,130 @@ export default function App() {
         {!python && !pythonErr && (
           <div className="muted">
             Click <strong>Detect</strong> to check that <code>python3</code> is on PATH.
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <h2>Demucs — source separation</h2>
+          <button className="btn" onClick={detectDemucs} disabled={demucsChecking}>
+            {demucsChecking ? 'Probing…' : 'Check install'}
+          </button>
+        </div>
+        {demucsCheck && (
+          <ul className="kv">
+            <li><span className="k">found</span><span className="v">{demucsCheck.found ? 'yes' : 'no'}</span></li>
+            {demucsCheck.version && <li><span className="k">version</span><span className="v">{demucsCheck.version}</span></li>}
+            {demucsCheck.error && <li><span className="k">error</span><span className="v error-text">{demucsCheck.error}</span></li>}
+          </ul>
+        )}
+        <div className="picker-grid">
+          <PickerRow label="input audio" value={demucsInput} onPick={pickDemucsInput} disabled={demucsRunning} />
+          <PickerRow label="output dir" value={demucsOutDir} onPick={pickDemucsOutDir} disabled={demucsRunning} />
+          <div className="picker-row">
+            <span className="picker-label">model</span>
+            <select
+              className="picker-input"
+              value={demucsModel}
+              disabled={demucsRunning}
+              onChange={(e) => setDemucsModel(e.target.value)}
+            >
+              {['htdemucs', 'htdemucs_ft', 'mdx_extra', 'mdx_extra_q'].map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <button
+            className="btn primary"
+            onClick={runDemucs}
+            disabled={!demucsInput || !demucsOutDir || demucsRunning}
+          >
+            {demucsRunning ? 'Separating…' : 'Run Demucs'}
+          </button>
+        </div>
+        {demucsErr && <div className="error">{demucsErr}</div>}
+        {demucsResult && (
+          <div style={{ marginTop: 12 }}>
+            <ul className="kv">
+              <li><span className="k">success</span><span className="v">{demucsResult.success ? 'yes' : 'no'}</span></li>
+              {demucsResult.exit_code != null && <li><span className="k">exit</span><span className="v">{demucsResult.exit_code}</span></li>}
+              {demucsResult.output_dir && <li><span className="k">out dir</span><span className="v">{demucsResult.output_dir}</span></li>}
+            </ul>
+            {demucsResult.stems.length > 0 && (
+              <ul className="kv">
+                {demucsResult.stems.map((s) => (
+                  <li key={s}><span className="k">stem</span><span className="v">{s}</span></li>
+                ))}
+              </ul>
+            )}
+            {demucsResult.stderr && <pre className="log error-text">{demucsResult.stderr}</pre>}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <h2>WhisperX — transcription</h2>
+          <button className="btn" onClick={detectWhisperX} disabled={whisperxChecking}>
+            {whisperxChecking ? 'Probing…' : 'Check install'}
+          </button>
+        </div>
+        {whisperxCheck && (
+          <ul className="kv">
+            <li><span className="k">found</span><span className="v">{whisperxCheck.found ? 'yes' : 'no'}</span></li>
+            {whisperxCheck.version && <li><span className="k">version</span><span className="v">{whisperxCheck.version}</span></li>}
+            {whisperxCheck.error && <li><span className="k">error</span><span className="v error-text">{whisperxCheck.error}</span></li>}
+          </ul>
+        )}
+        <div className="picker-grid">
+          <PickerRow label="input audio" value={whisperxInput} onPick={pickWhisperXInput} disabled={whisperxRunning} />
+          <PickerRow label="output dir" value={whisperxOutDir} onPick={pickWhisperXOutDir} disabled={whisperxRunning} />
+          <div className="picker-row">
+            <span className="picker-label">model</span>
+            <select
+              className="picker-input"
+              value={whisperxModel}
+              disabled={whisperxRunning}
+              onChange={(e) => setWhisperxModel(e.target.value)}
+            >
+              {['tiny', 'base', 'small', 'medium', 'large-v2', 'large-v3'].map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <div className="picker-row">
+            <span className="picker-label">language</span>
+            <input
+              className="picker-input"
+              type="text"
+              value={whisperxLanguage}
+              disabled={whisperxRunning}
+              onChange={(e) => setWhisperxLanguage(e.target.value)}
+              placeholder="en"
+            />
+          </div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <button
+            className="btn primary"
+            onClick={runWhisperX}
+            disabled={!whisperxInput || !whisperxOutDir || whisperxRunning}
+          >
+            {whisperxRunning ? 'Transcribing…' : 'Run WhisperX'}
+          </button>
+        </div>
+        {whisperxErr && <div className="error">{whisperxErr}</div>}
+        {whisperxResult && (
+          <div style={{ marginTop: 12 }}>
+            <ul className="kv">
+              <li><span className="k">success</span><span className="v">{whisperxResult.success ? 'yes' : 'no'}</span></li>
+              {whisperxResult.exit_code != null && <li><span className="k">exit</span><span className="v">{whisperxResult.exit_code}</span></li>}
+              {whisperxResult.json_path && <li><span className="k">json</span><span className="v">{whisperxResult.json_path}</span></li>}
+            </ul>
+            {whisperxResult.stderr && <pre className="log error-text">{whisperxResult.stderr}</pre>}
           </div>
         )}
       </section>
