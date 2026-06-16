@@ -87,3 +87,53 @@ export async function removeShare(songId: string, userId: string): Promise<void>
     .eq('user_id', userId);
   if (error) throw error;
 }
+
+/**
+ * Count songs shared with the current user that haven't been viewed
+ * yet (viewed_at is null). Drives the "N new" badge on Home /
+ * Library so a choir member knows when a worship leader has dropped
+ * something into their queue.
+ *
+ * RLS: the `song_shares_recipient_reads_own` policy lets the
+ * recipient see their own rows; this query just filters those.
+ */
+export async function countUnviewedShares(currentUserId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('song_shares')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', currentUserId)
+    .is('viewed_at', null);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/**
+ * Mark a share as viewed by stamping `viewed_at = now()` on the
+ * recipient's own row. Called the first time the user opens a song
+ * that was shared with them. Idempotent — re-stamping does nothing
+ * meaningful, but we no-op if the row already has a non-null
+ * viewed_at to avoid a needless write.
+ */
+export async function markShareViewed(
+  songId: string,
+  currentUserId: string,
+): Promise<void> {
+  const { data, error: readErr } = await supabase
+    .from('song_shares')
+    .select('viewed_at')
+    .eq('song_id', songId)
+    .eq('user_id', currentUserId)
+    .maybeSingle();
+  if (readErr) throw readErr;
+  // No share row for this user (e.g. they own the song outright)
+  // — nothing to mark.
+  if (!data) return;
+  if (data.viewed_at != null) return;
+
+  const { error } = await supabase
+    .from('song_shares')
+    .update({ viewed_at: new Date().toISOString() })
+    .eq('song_id', songId)
+    .eq('user_id', currentUserId);
+  if (error) throw error;
+}

@@ -9,6 +9,7 @@ import Setlists from './Setlists';
 import SetlistDetail from './SetlistDetail';
 import WorshipMixer from './WorshipMixer.jsx';
 import { fetchSongById, type Song } from './lib/songs';
+import { countUnviewedShares } from './lib/shares';
 import { loadPersistedState, savePersistedState } from './lib/session-state';
 
 type View =
@@ -26,6 +27,19 @@ export default function App() {
   const [view, setView] = useState<View>('home');
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [selectedSetlistId, setSelectedSetlistId] = useState<string | null>(null);
+  const [unviewedShares, setUnviewedShares] = useState<number>(0);
+
+  // Refresh the unviewed-share count when we land on Home or Library —
+  // those are the surfaces where the badge is visible. Cheap aggregate
+  // query (count-only, head: true). Failures are silent: a missing
+  // badge is better than scaring the user.
+  useEffect(() => {
+    if (!session) return;
+    if (view !== 'home' && view !== 'library') return;
+    countUnviewedShares(session.user.id)
+      .then(setUnviewedShares)
+      .catch(() => {});
+  }, [view, session?.user.id, selectedSong?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,6 +154,7 @@ export default function App() {
       <SongDetail
         song={selectedSong}
         ownedByMe={selectedSong.owner_id === session.user.id}
+        currentUserId={session.user.id}
         onBack={() => {
           setSelectedSong(null);
           // If we got here from a setlist, return to it; otherwise to Library.
@@ -184,6 +199,7 @@ export default function App() {
   return (
     <Home
       email={email}
+      unviewedShares={unviewedShares}
       onOpenMixer={() => setView('mixer')}
       onOpenLibrary={() => setView('library')}
       onOpenSetlists={() => setView('setlists')}

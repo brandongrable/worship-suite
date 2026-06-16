@@ -1,5 +1,6 @@
 type HomeProps = {
   email: string;
+  unviewedShares?: number;
   onOpenMixer: () => void;
   onOpenLibrary: () => void;
   onOpenSetlists: () => void;
@@ -11,6 +12,7 @@ const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 
 export default function Home({
   email,
+  unviewedShares = 0,
   onOpenMixer,
   onOpenLibrary,
   onOpenSetlists,
@@ -49,9 +51,14 @@ export default function Home({
         <div style={{ display: 'grid', gap: 10 }}>
           <BigButton
             label="My Library"
-            sublabel="Songs from your account · live data"
+            sublabel={
+              unviewedShares > 0
+                ? `Songs from your account · ${unviewedShares} new shared with you`
+                : 'Songs from your account · live data'
+            }
             onClick={onOpenLibrary}
             accent="#9B6AD8"
+            badge={unviewedShares}
           />
           <BigButton
             label="Setlists"
@@ -92,11 +99,13 @@ function BigButton({
   sublabel,
   onClick,
   accent,
+  badge = 0,
 }: {
   label: string;
   sublabel: string;
   onClick: () => void;
   accent: string;
+  badge?: number;
 }) {
   return (
     <button
@@ -113,10 +122,34 @@ function BigButton({
         display: 'flex',
         flexDirection: 'column',
         gap: 4,
+        position: 'relative',
       }}
     >
       <span style={{ fontSize: 15, fontWeight: 600 }}>{label}</span>
       <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>{sublabel}</span>
+      {badge > 0 && (
+        <span
+          style={{
+            position: 'absolute',
+            top: 12,
+            right: 14,
+            minWidth: 22,
+            height: 22,
+            padding: '0 7px',
+            borderRadius: 11,
+            background: '#D94545',
+            color: '#fff',
+            fontSize: 11,
+            fontWeight: 700,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+          }}
+        >
+          {badge}
+        </span>
+      )}
     </button>
   );
 }

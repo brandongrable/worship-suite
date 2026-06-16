@@ -5,6 +5,8 @@ import {
   moveSongInSetlist,
   removeSongFromSetlist,
   renameSetlist,
+  reorderSetlistSongs,
+  setSetlistSongServiceKey,
   type Setlist,
   type SetlistSongRow,
 } from './lib/setlists';
@@ -12,6 +14,8 @@ import { listMySongs, type Song } from './lib/songs';
 
 const monoFont = "'JetBrains Mono', 'SF Mono', monospace";
 const sansFont = "'DM Sans', sans-serif";
+
+const KEYS = ['A', 'Bb', 'B', 'C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab'];
 
 export default function SetlistDetail({
   setlistId,
@@ -30,6 +34,8 @@ export default function SetlistDetail({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [editingName, setEditingName] = useState<string | null>(null);
+  const [draggingSongId, setDraggingSongId] = useState<string | null>(null);
+  const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null);
 
   async function refresh() {
     setError(null);
@@ -91,6 +97,50 @@ export default function SetlistDetail({
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDrop(targetIdx: number) {
+    if (!draggingSongId) return;
+    const sourceIdx = songs.findIndex((s) => s.song.id === draggingSongId);
+    setDraggingSongId(null);
+    setDropTargetIdx(null);
+    if (sourceIdx === -1 || sourceIdx === targetIdx) return;
+
+    // Optimistic reorder: pull the source out, splice in at target
+    // (accounting for the shift when source was above target).
+    const next = [...songs];
+    const [moved] = next.splice(sourceIdx, 1);
+    if (!moved) return;
+    const insertIdx = sourceIdx < targetIdx ? targetIdx - 1 : targetIdx;
+    next.splice(insertIdx, 0, moved);
+    setSongs(next);
+
+    setBusy('reorder');
+    try {
+      await reorderSetlistSongs(setlistId, next.map((n) => n.song.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      // Roll back UI to match server.
+      await refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleServiceKey(songId: string, key: string | null) {
+    setBusy(`key:${songId}`);
+    // Optimistic — the dropdown's UI feel is what matters here.
+    setSongs((prev) =>
+      prev.map((s) => (s.song.id === songId ? { ...s, service_key: key } : s)),
+    );
+    try {
+      await setSetlistSongServiceKey(setlistId, songId, key);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      await refresh();
     } finally {
       setBusy(null);
     }
@@ -199,22 +249,69 @@ export default function SetlistDetail({
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8 }}>
             {songs.map((row, idx) => {
-              const moving = busy?.startsWith('move:') || busy?.startsWith('remove:');
+              const moving = busy?.startsWith('move:') || busy === 'reorder';
               const stems = ((row.song.record ?? {}) as { stems?: object }).stems;
               const stemCount = stems ? Object.keys(stems).length : 0;
+              const isDragging = draggingSongId === row.song.id;
+              const isDropTarget = dropTargetIdx === idx;
+              const effectiveKey = row.service_key ?? row.song.key;
+              const keyChanged = row.service_key != null && row.service_key !== row.song.key;
               return (
                 <li
                   key={row.song.id}
+                  draggable={ownedByMe}
+                  onDragStart={(e) => {
+                    if (!ownedByMe) return;
+                    setDraggingSongId(row.song.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', row.song.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingSongId(null);
+                    setDropTargetIdx(null);
+                  }}
+                  onDragOver={(e) => {
+                    if (!ownedByMe || !draggingSongId) return;
+                    e.preventDefault();
+                    setDropTargetIdx(idx);
+                  }}
+                  onDrop={(e) => {
+                    if (!ownedByMe) return;
+                    e.preventDefault();
+                    handleDrop(idx);
+                  }}
                   style={{
                     padding: '12px 14px',
                     borderRadius: 10,
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.06)',
+                    background: isDropTarget
+                      ? 'rgba(232,200,64,0.08)'
+                      : isDragging
+                        ? 'rgba(155,106,216,0.06)'
+                        : 'rgba(255,255,255,0.04)',
+                    border: isDropTarget
+                      ? '1px solid rgba(232,200,64,0.4)'
+                      : '1px solid rgba(255,255,255,0.06)',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 12,
+                    opacity: isDragging ? 0.4 : 1,
+                    transition: 'background 0.1s, border-color 0.1s, opacity 0.1s',
                   }}
                 >
+                  {ownedByMe && (
+                    <div
+                      style={{
+                        cursor: 'grab',
+                        color: 'rgba(255,255,255,0.3)',
+                        fontSize: 14,
+                        flexShrink: 0,
+                        userSelect: 'none',
+                      }}
+                      title="Drag to reorder"
+                    >
+                      ⋮⋮
+                    </div>
+                  )}
                   <div
                     style={{
                       width: 28,
@@ -256,10 +353,52 @@ export default function SetlistDetail({
                         marginTop: 2,
                       }}
                     >
-                      {row.song.key} · {row.song.bpm} bpm · {stemCount} stem
+                      <span
+                        style={{
+                          color: keyChanged ? '#E8C840' : undefined,
+                          fontWeight: keyChanged ? 700 : undefined,
+                        }}
+                      >
+                        {effectiveKey}
+                        {keyChanged && ` (orig ${row.song.key})`}
+                      </span>
+                      {' · '}
+                      {row.song.bpm} bpm · {stemCount} stem
                       {stemCount === 1 ? '' : 's'}
                     </div>
                   </button>
+                  {ownedByMe && (
+                    <select
+                      value={row.service_key ?? ''}
+                      onChange={(e) =>
+                        handleServiceKey(row.song.id, e.target.value || null)
+                      }
+                      disabled={moving}
+                      style={{
+                        background: keyChanged
+                          ? 'rgba(232,200,64,0.1)'
+                          : 'rgba(255,255,255,0.04)',
+                        border: keyChanged
+                          ? '1px solid rgba(232,200,64,0.4)'
+                          : '1px solid rgba(255,255,255,0.1)',
+                        color: keyChanged ? '#E8C840' : 'rgba(255,255,255,0.6)',
+                        padding: '4px 6px',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontFamily: monoFont,
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                      }}
+                      title="Service-key override (blank = song default)"
+                    >
+                      <option value="">— key —</option>
+                      {KEYS.map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   {ownedByMe && (
                     <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                       <button

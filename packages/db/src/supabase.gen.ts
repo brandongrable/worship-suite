@@ -38,16 +38,19 @@ export type Database = {
       setlist_songs: {
         Row: {
           position: number
+          service_key: string | null
           setlist_id: string
           song_id: string
         }
         Insert: {
           position: number
+          service_key?: string | null
           setlist_id: string
           song_id: string
         }
         Update: {
           position?: number
+          service_key?: string | null
           setlist_id?: string
           song_id?: string
         }
@@ -95,18 +98,21 @@ export type Database = {
           created_at: string
           song_id: string
           user_id: string
+          viewed_at: string | null
         }
         Insert: {
           can_edit?: boolean
           created_at?: string
           song_id: string
           user_id: string
+          viewed_at?: string | null
         }
         Update: {
           can_edit?: boolean
           created_at?: string
           song_id?: string
           user_id?: string
+          viewed_at?: string | null
         }
         Relationships: [
           {

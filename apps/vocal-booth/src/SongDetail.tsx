@@ -10,6 +10,7 @@ import {
   addShare,
   findUserIdByEmail,
   listSharesForSong,
+  markShareViewed,
   removeShare,
   type ShareWithRecipient,
 } from './lib/shares';
@@ -59,12 +60,14 @@ type RecordShape = {
 export default function SongDetail({
   song: songProp,
   ownedByMe,
+  currentUserId,
   onBack,
   onOpenMixer,
   onUpdated,
 }: {
   song: Song;
   ownedByMe: boolean;
+  currentUserId: string;
   onBack: () => void;
   onOpenMixer: () => void;
   onUpdated: (next: Song) => void;
@@ -75,6 +78,19 @@ export default function SongDetail({
   // App's selectedSong, which must include freshly uploaded stems).
   const [song, setSong] = useState<Song>(songProp);
   useEffect(() => { setSong(songProp); }, [songProp.id]);
+
+  // When a recipient opens a song that was shared with them, stamp
+  // viewed_at on their share row so the "N new" badge in Home /
+  // Library decrements. No-op for owners (no share row) and for
+  // already-viewed shares (handled inside markShareViewed).
+  useEffect(() => {
+    if (ownedByMe) return;
+    markShareViewed(songProp.id, currentUserId).catch(() => {
+      // Silently ignore — notification accuracy isn't worth surfacing
+      // a confusing error to the choir member who's just here to
+      // practice their part.
+    });
+  }, [songProp.id, currentUserId, ownedByMe]);
 
   const created = new Date(song.created_at).toLocaleString();
   const updated = new Date(song.updated_at).toLocaleString();

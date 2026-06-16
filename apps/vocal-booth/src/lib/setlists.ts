@@ -10,6 +10,7 @@ export type SetlistWithCount = Setlist & { song_count: number };
 export type SetlistSongRow = {
   song: Song;
   position: number;
+  service_key: string | null;
 };
 
 /** All setlists owned by the current user, newest first. */
@@ -74,7 +75,7 @@ export async function getSetlistWithSongs(
 
   const { data: entries, error: entriesErr } = await supabase
     .from('setlist_songs')
-    .select('position, song:songs(*)')
+    .select('position, service_key, song:songs(*)')
     .eq('setlist_id', id)
     .order('position', { ascending: true });
   if (entriesErr) throw entriesErr;
@@ -84,7 +85,13 @@ export async function getSetlistWithSongs(
     // row. Defensive against the array form just in case.
     const song = Array.isArray(e.song) ? e.song[0] : e.song;
     if (!song) return [];
-    return [{ song: song as Song, position: e.position }];
+    return [
+      {
+        song: song as Song,
+        position: e.position,
+        service_key: e.service_key ?? null,
+      },
+    ];
   });
 
   return { setlist, songs };
@@ -128,6 +135,47 @@ export async function removeSongFromSetlist(
     .delete()
     .eq('setlist_id', setlistId)
     .eq('song_id', songId);
+  if (error) throw error;
+}
+
+/**
+ * Set or clear the per-setlist service-key override for one entry.
+ * Pass null to revert to the song's default key.
+ */
+export async function setSetlistSongServiceKey(
+  setlistId: string,
+  songId: string,
+  key: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('setlist_songs')
+    .update({ service_key: key })
+    .eq('setlist_id', setlistId)
+    .eq('song_id', songId);
+  if (error) throw error;
+}
+
+/**
+ * Rewrite every entry's position so they're sequential 1..N in the
+ * order of `orderedSongIds`. Used by the drag-and-drop reorder
+ * affordance — one round-trip via PostgREST upsert keyed on the
+ * composite PK so all rows change positions atomically from the
+ * client's point of view (no in-between state visible to other
+ * readers, since RLS scopes the rows to the setlist owner).
+ */
+export async function reorderSetlistSongs(
+  setlistId: string,
+  orderedSongIds: string[],
+): Promise<void> {
+  if (orderedSongIds.length === 0) return;
+  const rows = orderedSongIds.map((song_id, i) => ({
+    setlist_id: setlistId,
+    song_id,
+    position: i + 1,
+  }));
+  const { error } = await supabase
+    .from('setlist_songs')
+    .upsert(rows, { onConflict: 'setlist_id,song_id' });
   if (error) throw error;
 }
 
