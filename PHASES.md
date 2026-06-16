@@ -201,23 +201,46 @@ Charter is now auth-gated and round-trips chord charts through Supabase.
 - Choir-member notification UI when a setlist is shared with you
 - Setlist-as-rehearsal-home (replacing Library default)
 
-## Phase 7 — Demucs + WhisperX integration  📋
+## Phase 7 — Demucs + WhisperX integration  🟡 code complete, needs live test
 
-Pipeline currently picks up *after* Demucs (source separation) and
-WhisperX (word timing) have run. Phase 7 makes Pipeline orchestrate
-those steps too — so the producer workflow becomes "drop the recording
-in, watch the stages roll."
+Pipeline previously picked up *after* Demucs and WhisperX had run
+by hand. This slice wraps both as Tauri commands and threads them
+into the producer console as their own cards above Aligner.
 
-- Demucs subprocess wrapper (separate stems from a mixed recording)
-- WhisperX subprocess wrapper (produce the `word_segments` JSON)
-- Pipeline UI: pipeline diagram with per-stage status
-- Cached intermediates so re-running one stage doesn't recompute the
-  upstream ones
+- `demucs_check` / `demucs_separate` Tauri commands (Rust) — runs
+  `python3 -m demucs -n <model> -o <dir> <input>`; walks the output
+  dir and returns the stem paths
+- `whisperx_check` / `whisperx_transcribe` Tauri commands — runs
+  `whisperx <input> --output_dir <dir> --output_format json --model
+  <model> --language <lang>`; returns the produced JSON path
+- Pipeline UI: two new cards (Demucs + WhisperX) with file pickers,
+  model dropdowns, run buttons, and per-stage success / exit /
+  stderr surfacing. Auto-chain: Demucs's `vocals.wav` prefills
+  WhisperX's input + matching output dir; WhisperX's JSON path
+  prefills the aligner's JSON picker.
 
-## Phase 8 — Polish + share with humans  📋
+Caveat: written without local Demucs/WhisperX installed. Code
+compiles + 7 Rust tests stay green; needs `pip install demucs
+whisperx` + a real audio file to exercise end-to-end.
 
-- Production deploy of Vocal Booth (web) and Charter (web). Supabase
-  Auth redirect URLs updated.
-- Tauri builds of Pipeline distributable
-- Onboarding flow for first-time choir members
-- Real user testing
+Caching of intermediate artifacts (skip stages when their inputs
+haven't changed) is deferred — straightforward to layer on once
+the live wiring is verified.
+
+## Phase 8 — Polish + share with humans  🟡 prep done, waiting on you
+
+Code-side prep landed; what's left needs your decisions:
+
+- `apps/<app>/vercel.json` — bundled, point Vercel projects at the
+  app directories and these files configure the build / install /
+  SPA rewrite
+- `DEPLOY.md` — end-to-end checklist for Vercel project creation,
+  env vars (browser-exposed Supabase keys only — service role
+  stays in Pipeline `.env.local`), Supabase auth redirect URL
+  updates, Tauri distribution path, and a pre-launch checklist
+
+Still your call:
+
+- Domain names (vercel.app subdomains or custom)
+- Tauri Apple Developer ID for signed Pipeline `.dmg` distribution
+- Real user testing — choir members on production builds
