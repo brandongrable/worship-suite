@@ -2,6 +2,9 @@
 
 Three apps + one shared backend.
 
+End-to-end data flow at [`docs/data-flow.svg`](docs/data-flow.svg) —
+open on GitHub to view (SVG, so editable / regen-friendly).
+
 | What | Where | Stack | State |
 |---|---|---|---|
 | **Pipeline** | `apps/pipeline/` | Tauri desktop — orchestrates Demucs → WhisperX → aligner → publish | skeleton (Tauri scaffold pending Rust install) |
