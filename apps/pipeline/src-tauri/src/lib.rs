@@ -5,6 +5,29 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Path to the Python interpreter Pipeline shells out to. Defaults
+/// to `python3` (PATH lookup); the producer can override via
+/// `PIPELINE_PYTHON_BIN` in `.env.local` to pin a specific Python
+/// — useful when the system `python3` is broken (e.g. Homebrew
+/// Python on macOS Tahoe has a libexpat ABI mismatch) and Demucs /
+/// the aligner are installed under a pyenv-managed Python instead.
+fn python_bin() -> String {
+    env::var("PIPELINE_PYTHON_BIN")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "python3".to_string())
+}
+
+/// Path to the `whisperx` CLI. Defaults to `whisperx` (PATH lookup).
+/// Override with `PIPELINE_WHISPERX_BIN` — typically the same Python
+/// bin directory as PIPELINE_PYTHON_BIN.
+fn whisperx_bin() -> String {
+    env::var("PIPELINE_WHISPERX_BIN")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "whisperx".to_string())
+}
+
 #[derive(Serialize)]
 struct Health {
     ok: bool,
@@ -31,7 +54,7 @@ struct PythonInfo {
 /// want to surface in the UI before the user tries to run anything.
 #[tauri::command]
 fn python_check() -> PythonInfo {
-    match Command::new("python3").arg("--version").output() {
+    match Command::new(&python_bin()).arg("--version").output() {
         Ok(out) if out.status.success() => {
             // Python 3.4+ writes the version to stdout; earlier wrote to
             // stderr. We accept either to be safe.
@@ -87,7 +110,7 @@ fn run_aligner(
     out_path: String,
     structure_path: Option<String>,
 ) -> Result<AlignerResult, String> {
-    let mut cmd = Command::new("python3");
+    let mut cmd = Command::new(&python_bin());
     cmd.arg("-m")
         .arg("aligner")
         .arg(&midi_path)
@@ -239,7 +262,7 @@ fn demucs_separate(
         }
     }
 
-    let mut cmd = Command::new("python3");
+    let mut cmd = Command::new(&python_bin());
     cmd.arg("-m")
         .arg("demucs")
         .arg("-n")
@@ -333,7 +356,7 @@ fn whisperx_transcribe(
         });
     }
 
-    let mut cmd = Command::new("whisperx");
+    let mut cmd = Command::new(&whisperx_bin());
     cmd.arg(&input_audio)
         .arg("--output_dir")
         .arg(&output_dir)
@@ -368,7 +391,7 @@ struct StageTool {
 /// demucs` before kicking off a separation run.
 #[tauri::command]
 fn demucs_check() -> StageTool {
-    match Command::new("python3")
+    match Command::new(&python_bin())
         .args(["-c", "import demucs; print(demucs.__version__)"])
         .output()
     {
@@ -395,7 +418,7 @@ fn demucs_check() -> StageTool {
 /// doesn't print a clean `--version` today).
 #[tauri::command]
 fn whisperx_check() -> StageTool {
-    match Command::new("whisperx").arg("--help").output() {
+    match Command::new(&whisperx_bin()).arg("--help").output() {
         Ok(out) if out.status.success() => {
             let first_line = String::from_utf8_lossy(&out.stdout)
                 .lines()
