@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useEffect, useState } from 'react';
 import './App.css';
@@ -658,8 +658,11 @@ export default function App() {
   }
 
   async function pickMelodyOutput() {
-    const selected = await openDialog({
-      multiple: false,
+    // Save dialog (not open) — the user is choosing where to WRITE
+    // a new file, not picking an existing one. openDialog requires
+    // the file to exist; saveDialog lets the user type a name and
+    // confirms before overwriting.
+    const selected = await saveDialog({
       filters: [{ name: 'MIDI', extensions: ['mid', 'midi'] }],
       defaultPath: melodyOutput ?? undefined,
     });
