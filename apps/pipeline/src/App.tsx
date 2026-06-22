@@ -709,6 +709,11 @@ export default function App() {
             </>
           )}
         </div>
+        <RunningIndicator
+          active={demucsRunning}
+          label={`Separating with ${demucsModel}… (CPU work, takes minutes)`}
+          accent="cyan"
+        />
         {demucsErr && <div className="error">{demucsErr}</div>}
         {demucsResult && (
           <div style={{ marginTop: 12 }}>
@@ -798,6 +803,11 @@ export default function App() {
             </>
           )}
         </div>
+        <RunningIndicator
+          active={whisperxRunning}
+          label={`Transcribing with whisperx (${whisperxModel}, ${whisperxLanguage})…`}
+          accent="cyan"
+        />
         {whisperxErr && <div className="error">{whisperxErr}</div>}
         {whisperxResult && (
           <div style={{ marginTop: 12 }}>
@@ -843,6 +853,11 @@ export default function App() {
           </div>
         </div>
 
+        <RunningIndicator
+          active={running}
+          label="Running aligner subprocess…"
+          accent="amber"
+        />
         {runErr && <div className="error" style={{ marginTop: 12 }}>IPC error: {runErr}</div>}
         {result && (
           <div className="result">
@@ -968,6 +983,11 @@ export default function App() {
             >
               {publishing ? 'Publishing…' : 'Publish to Supabase'}
             </button>
+            <RunningIndicator
+              active={publishing}
+              label="POSTing to PostgREST…"
+              accent="lavender"
+            />
             {publishErr && (
               <div className="error" style={{ marginTop: 10 }}>
                 {publishErr}
@@ -1034,6 +1054,11 @@ export default function App() {
                       </button>
                     </div>
                   )}
+                  <RunningIndicator
+                    active={uploading}
+                    label={`Uploading ${stemTrack} stem to Storage…`}
+                    accent="amber"
+                  />
                   {uploadErr && (
                     <div className="error" style={{ marginTop: 10 }}>
                       {uploadErr}
@@ -1178,6 +1203,66 @@ function FlagsList({ items }: { items: ReviewItem[] }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * Animated loading indicator for long-running stages. Shows a
+ * spinner + label + marquee bar + elapsed-seconds counter so the
+ * producer can tell at a glance that the subprocess is alive even
+ * when Demucs / WhisperX don't surface intermediate progress.
+ *
+ * `active` toggles visibility — when false, the component renders
+ * nothing and the elapsed-time tick is unmounted (no idle interval).
+ *
+ * `accent` picks the color tint:
+ *   - 'cyan'     — Demucs / WhisperX (subprocess stages)
+ *   - 'amber'    — Aligner / publish
+ *   - 'lavender' — generic
+ */
+function RunningIndicator({
+  active,
+  label,
+  accent = 'cyan',
+}: {
+  active: boolean;
+  label: string;
+  accent?: 'cyan' | 'amber' | 'lavender';
+}) {
+  const [startMs, setStartMs] = useState<number | null>(null);
+  const [now, setNow] = useState<number>(Date.now());
+
+  useEffect(() => {
+    if (!active) {
+      setStartMs(null);
+      return;
+    }
+    const start = Date.now();
+    setStartMs(start);
+    setNow(start);
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [active]);
+
+  if (!active) return null;
+  const elapsed = startMs == null ? 0 : Math.floor((now - startMs) / 1000);
+  const mm = Math.floor(elapsed / 60);
+  const ss = (elapsed % 60).toString().padStart(2, '0');
+  const cls =
+    accent === 'amber'
+      ? 'running running-amber'
+      : accent === 'lavender'
+        ? 'running running-lavender'
+        : 'running';
+  return (
+    <div className={cls} role="status" aria-live="polite">
+      <span className="spinner" />
+      <span className="label">{label}</span>
+      <span className="bar" />
+      <span className="elapsed">
+        {mm}:{ss}
+      </span>
     </div>
   );
 }
