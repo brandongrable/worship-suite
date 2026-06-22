@@ -38,6 +38,39 @@ type CacheStatus = {
   detail: string[];
 };
 
+// Inline descriptors for the Demucs models we expose. Both the
+// option's hover tooltip and the always-visible hint below the
+// dropdown read from here so they stay in sync.
+const DEMUCS_MODEL_INFO: Record<
+  string,
+  { label: string; short: string; long: string }
+> = {
+  htdemucs: {
+    label: 'htdemucs',
+    short: 'Recommended · current default · fast + clean',
+    long:
+      'Hybrid Transformer Demucs v4. Time + spectrogram domain. ~80MB, ~2min per song on CPU. Best general-purpose choice.',
+  },
+  htdemucs_ft: {
+    label: 'htdemucs_ft',
+    short: 'Fine-tuned · highest quality · ~4× slower',
+    long:
+      'Per-stem fine-tuned weights. Marginally cleaner vocals than htdemucs, but runs the model 4× (once per stem). Worth it only when bleed is unacceptable.',
+  },
+  mdx_extra: {
+    label: 'mdx_extra',
+    short: 'Older v3 · spectrogram-only · MDX 2021 winner',
+    long:
+      'Demucs v3 era. Spectrogram-only, different artifact profile than htdemucs. Mostly historical at this point.',
+  },
+  mdx_extra_q: {
+    label: 'mdx_extra_q',
+    short: 'Quantized mdx_extra · smaller download, lower quality',
+    long:
+      'Quantized version of mdx_extra. Useful if disk space matters; otherwise skip.',
+  },
+};
+
 type ReviewItem = {
   kind: string; // 'low_confidence' | 'long_run' | ...
   word: string;
@@ -584,11 +617,26 @@ export default function App() {
               value={demucsModel}
               disabled={demucsRunning}
               onChange={(e) => setDemucsModel(e.target.value)}
+              title={DEMUCS_MODEL_INFO[demucsModel]?.long}
             >
               {['htdemucs', 'htdemucs_ft', 'mdx_extra', 'mdx_extra_q'].map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m} value={m} title={DEMUCS_MODEL_INFO[m]?.long}>
+                  {m}
+                </option>
               ))}
             </select>
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.55)',
+              fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+              marginTop: 2,
+              marginLeft: 4,
+              fontStyle: 'italic',
+            }}
+          >
+            {DEMUCS_MODEL_INFO[demucsModel]?.short}
           </div>
           <div className="picker-row">
             <span className="picker-label">stems</span>
@@ -599,10 +647,39 @@ export default function App() {
               onChange={(e) =>
                 setDemucsMode(e.target.value as 'two_stems_vocals' | 'four_stems')
               }
+              title={
+                demucsMode === 'two_stems_vocals'
+                  ? 'Demucs --two-stems vocals: vocals.wav + no_vocals.wav. Right for worship vocal/band splits.'
+                  : "Demucs's standard output: vocals + drums + bass + other. Use when you want to mix band stems independently."
+              }
             >
-              <option value="two_stems_vocals">vocals + instrumental (2)</option>
-              <option value="four_stems">drums + bass + other + vocals (4)</option>
+              <option
+                value="two_stems_vocals"
+                title="vocals.wav + no_vocals.wav — the worship default"
+              >
+                vocals + instrumental (2)
+              </option>
+              <option
+                value="four_stems"
+                title="vocals + drums + bass + other — mix the band stems separately"
+              >
+                drums + bass + other + vocals (4)
+              </option>
             </select>
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.55)',
+              fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+              marginTop: 2,
+              marginLeft: 4,
+              fontStyle: 'italic',
+            }}
+          >
+            {demucsMode === 'two_stems_vocals'
+              ? 'Worship default · vocal isolate + band mix in one pass'
+              : 'Full split · use when mixing band stems independently'}
           </div>
         </div>
         <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
