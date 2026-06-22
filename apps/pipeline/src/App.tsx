@@ -49,6 +49,14 @@ type AudioSeparatorResult = {
   stems: string[];
 };
 
+type ExtractMelodyResult = {
+  success: boolean;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  midi_path: string;
+};
+
 type CacheStatus = {
   cached: boolean;
   artifact: string | null;
@@ -278,6 +286,21 @@ export default function App() {
   const [asepCache, setAsepCache] = useState<CacheStatus | null>(null);
   const [asepPercent, setAsepPercent] = useState<number | null>(null);
 
+  // Phase 7: extract-melody (CREPE → MIDI). Replaces Synthesizer V's
+  // pitch-extraction step in the producer workflow.
+  const [melodyCheck, setMelodyCheck] = useState<StageTool | null>(null);
+  const [melodyChecking, setMelodyChecking] = useState(false);
+  const [melodyInput, setMelodyInput] = useState<string | null>(null);
+  const [melodyOutput, setMelodyOutput] = useState<string | null>(null);
+  const [melodyConfidence, setMelodyConfidence] = useState<number>(0.5);
+  const [melodyMinDuration, setMelodyMinDuration] = useState<number>(0.05);
+  const [melodyModel, setMelodyModel] = useState<'full' | 'tiny'>('full');
+  const [melodyRunning, setMelodyRunning] = useState(false);
+  const [melodyResult, setMelodyResult] = useState<ExtractMelodyResult | null>(null);
+  const [melodyErr, setMelodyErr] = useState<string | null>(null);
+  const [melodyCache, setMelodyCache] = useState<CacheStatus | null>(null);
+  const [melodyPercent, setMelodyPercent] = useState<number | null>(null);
+
   // Phase 7: WhisperX transcription stage.
   const [whisperxCheck, setWhisperxCheck] = useState<StageTool | null>(null);
   const [whisperxChecking, setWhisperxChecking] = useState(false);
@@ -345,6 +368,18 @@ export default function App() {
       .catch(() => setAsepCache(null));
   }, [asepInput, asepOutDir]);
 
+  useEffect(() => {
+    if (!melodyOutput) {
+      setMelodyCache(null);
+      return;
+    }
+    invoke<CacheStatus>('extract_melody_cache_status', {
+      midiPath: melodyOutput,
+    })
+      .then(setMelodyCache)
+      .catch(() => setMelodyCache(null));
+  }, [melodyOutput]);
+
   // Subscribe to Tauri progress events emitted by the streaming
   // subprocess wrappers (demucs_separate, audio_separator_run). The
   // listeners survive the component's lifetime; each new Run resets
@@ -364,9 +399,16 @@ export default function App() {
     }).then((u) => {
       unsubAsep = u;
     });
+    let unsubMelody: (() => void) | undefined;
+    listen<{ percent: number; line: string }>('extract-melody:progress', (event) => {
+      setMelodyPercent(event.payload.percent);
+    }).then((u) => {
+      unsubMelody = u;
+    });
     return () => {
       unsubDemucs?.();
       unsubAsep?.();
+      unsubMelody?.();
     };
   }, []);
 
@@ -574,10 +616,81 @@ export default function App() {
         force,
       });
       setAsepResult(r);
+      // Auto-chain: the (Vocals) output of audio-separator (the
+      // cleanest lead vocal we'll get) feeds the melody extractor.
+      if (r.success && r.stems.length > 0) {
+        const lead = r.stems.find((p) => /vocals/i.test(p)) ?? r.stems[0]!;
+        if (!melodyInput) setMelodyInput(lead);
+        if (!melodyOutput) {
+          const sep = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
+          const dir = sep > 0 ? lead.slice(0, sep) : '';
+          const base = (sep > 0 ? lead.slice(sep + 1) : lead).replace(
+            /\.[a-z0-9]+$/i,
+            '',
+          );
+          if (dir) setMelodyOutput(`${dir}/${base}_melody.mid`);
+        }
+      }
     } catch (e) {
       setAsepErr(String(e));
     } finally {
       setAsepRunning(false);
+    }
+  }
+
+  async function detectMelody() {
+    setMelodyChecking(true);
+    try {
+      setMelodyCheck(await invoke<StageTool>('extract_melody_check'));
+    } catch (e) {
+      setMelodyCheck({ found: false, version: null, error: String(e) });
+    } finally {
+      setMelodyChecking(false);
+    }
+  }
+
+  async function pickMelodyInput() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a', 'aac'] }],
+    });
+    if (typeof selected === 'string') setMelodyInput(selected);
+  }
+
+  async function pickMelodyOutput() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'MIDI', extensions: ['mid', 'midi'] }],
+      defaultPath: melodyOutput ?? undefined,
+    });
+    if (typeof selected === 'string') setMelodyOutput(selected);
+  }
+
+  async function runExtractMelody(force = false) {
+    if (!melodyInput || !melodyOutput) return;
+    setMelodyRunning(true);
+    setMelodyResult(null);
+    setMelodyErr(null);
+    setMelodyPercent(0);
+    try {
+      const r = await invoke<ExtractMelodyResult>('extract_melody_run', {
+        inputAudio: melodyInput,
+        midiPath: melodyOutput,
+        confidence: melodyConfidence,
+        minDurationSec: melodyMinDuration,
+        model: melodyModel,
+        force,
+      });
+      setMelodyResult(r);
+      // Auto-chain: the produced MIDI feeds the aligner's MIDI picker.
+      if (r.success && r.midi_path && !midi) {
+        setMidi(r.midi_path);
+        if (!outPath) setOutPath(deriveOutPath(r.midi_path));
+      }
+    } catch (e) {
+      setMelodyErr(String(e));
+    } finally {
+      setMelodyRunning(false);
     }
   }
 
@@ -1150,6 +1263,139 @@ export default function App() {
               </ul>
             )}
             {asepResult.stderr && <pre className="log error-text">{asepResult.stderr}</pre>}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <h2>Extract melody — vocal → MIDI (CREPE)</h2>
+          <button className="btn" onClick={detectMelody} disabled={melodyChecking}>
+            {melodyChecking ? 'Probing…' : 'Check install'}
+          </button>
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.55)',
+            fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+            fontStyle: 'italic',
+            marginBottom: 10,
+          }}
+        >
+          Chain step 4a · monophonic pitch tracker · most-prominent
+          note only, no BGV bleed · output MIDI feeds the aligner
+        </div>
+        {melodyCheck && (
+          <ul className="kv">
+            <li><span className="k">found</span><span className="v">{melodyCheck.found ? 'yes' : 'no'}</span></li>
+            {melodyCheck.version && <li><span className="k">deps</span><span className="v">{melodyCheck.version}</span></li>}
+            {melodyCheck.error && <li><span className="k">error</span><span className="v error-text">{melodyCheck.error}</span></li>}
+          </ul>
+        )}
+        <div className="picker-grid">
+          <PickerRow label="input audio" value={melodyInput} onPick={pickMelodyInput} disabled={melodyRunning} />
+          <PickerRow label="output MIDI" value={melodyOutput} onPick={pickMelodyOutput} disabled={melodyRunning} />
+          <div className="picker-row">
+            <span className="picker-label">model</span>
+            <select
+              className="picker-input"
+              value={melodyModel}
+              disabled={melodyRunning}
+              onChange={(e) => setMelodyModel(e.target.value as 'full' | 'tiny')}
+              title="CREPE network size. 'full' is accurate; 'tiny' is ~10x faster, ~3% less accurate."
+            >
+              <option value="full">full · accurate · slower</option>
+              <option value="tiny">tiny · ~10× faster · slight accuracy hit</option>
+            </select>
+          </div>
+          <div className="picker-row">
+            <span className="picker-label">confidence</span>
+            <input
+              className="picker-input"
+              type="number"
+              min={0.3}
+              max={0.95}
+              step={0.05}
+              value={melodyConfidence}
+              disabled={melodyRunning}
+              onChange={(e) => setMelodyConfidence(Number(e.target.value))}
+              title="CREPE confidence threshold. Lower captures more notes (incl. spurious); higher = stricter."
+            />
+          </div>
+          <div className="picker-row">
+            <span className="picker-label">min note (s)</span>
+            <input
+              className="picker-input"
+              type="number"
+              min={0.02}
+              max={0.5}
+              step={0.01}
+              value={melodyMinDuration}
+              disabled={melodyRunning}
+              onChange={(e) => setMelodyMinDuration(Number(e.target.value))}
+              title="Drops notes shorter than this (in seconds). Higher = fewer artifacts, may miss fast passages."
+            />
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.55)',
+              fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+              marginTop: 2,
+              marginLeft: 4,
+              fontStyle: 'italic',
+            }}
+          >
+            {melodyConfidence >= 0.7
+              ? 'Strict · cleanest output · may miss soft / breathy notes'
+              : melodyConfidence >= 0.45
+                ? 'Balanced · safe default for worship vocals'
+                : 'Permissive · catches more notes incl. spurious BGV detections'}
+          </div>
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            className="btn primary"
+            onClick={() => runExtractMelody(false)}
+            disabled={!melodyInput || !melodyOutput || melodyRunning}
+          >
+            {melodyRunning
+              ? 'Tracking pitch…'
+              : melodyCache?.cached
+                ? 'Use cached'
+                : 'Extract melody'}
+          </button>
+          {melodyCache?.cached && (
+            <>
+              <span style={{ fontSize: 12, color: '#5B8C3E', fontFamily: 'monospace' }}>
+                ✓ cached: {melodyCache.artifact}
+              </span>
+              <button
+                className="btn"
+                onClick={() => runExtractMelody(true)}
+                disabled={melodyRunning}
+              >
+                Re-run
+              </button>
+            </>
+          )}
+        </div>
+        <RunningIndicator
+          active={melodyRunning}
+          label={`Running CREPE (${melodyModel}) on lead vocal…`}
+          accent="cyan"
+          percent={melodyPercent}
+        />
+        {melodyErr && <div className="error">{melodyErr}</div>}
+        {melodyResult && (
+          <div style={{ marginTop: 12 }}>
+            <ul className="kv">
+              <li><span className="k">success</span><span className="v">{melodyResult.success ? 'yes' : 'no'}</span></li>
+              {melodyResult.exit_code != null && <li><span className="k">exit</span><span className="v">{melodyResult.exit_code}</span></li>}
+              {melodyResult.midi_path && <li><span className="k">MIDI</span><span className="v">{melodyResult.midi_path}</span></li>}
+            </ul>
+            {melodyResult.stderr && <pre className="log error-text">{melodyResult.stderr}</pre>}
           </div>
         )}
       </section>

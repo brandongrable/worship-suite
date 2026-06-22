@@ -879,6 +879,190 @@ fn audio_separator_check() -> StageTool {
     }
 }
 
+// ============================================================
+// extract-melody — CREPE monophonic pitch tracker → MIDI
+// ============================================================
+
+#[derive(Serialize)]
+struct ExtractMelodyResult {
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    midi_path: String,
+}
+
+/// Path to the bundled extract_melody.py helper. In dev this lives
+/// at `apps/pipeline/scripts/extract_melody.py` — one level up from
+/// the src-tauri Cargo crate. Producer can override with
+/// PIPELINE_MELODY_SCRIPT for a packaged install.
+fn extract_melody_script() -> PathBuf {
+    if let Ok(p) = env::var("PIPELINE_MELODY_SCRIPT") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("scripts")
+        .join("extract_melody.py")
+}
+
+#[tauri::command]
+fn extract_melody_cache_status(midi_path: String) -> CacheStatus {
+    if PathBuf::from(&midi_path).exists() {
+        CacheStatus {
+            cached: true,
+            artifact: Some(midi_path),
+            detail: vec![],
+        }
+    } else {
+        CacheStatus { cached: false, artifact: None, detail: vec![] }
+    }
+}
+
+/// Run the extract_melody.py helper to convert a vocal audio file
+/// into a monophonic melody MIDI via CREPE pitch tracking. The
+/// resulting .mid feeds directly into the aligner's MIDI picker.
+///
+/// `confidence` (0..1, default 0.5) — CREPE confidence threshold;
+/// frames below are treated as silence. Lower captures more notes
+/// at the cost of more spurious ones.
+///
+/// `min_duration_sec` (default 0.05) — minimum note length kept.
+/// Filters out per-frame jitter that survived hysteresis.
+///
+/// `model` ("full" default, or "tiny") — CREPE network size. Full
+/// is the right call for accuracy; tiny is ~10× faster on CPU when
+/// you're iterating.
+#[tauri::command]
+async fn extract_melody_run(
+    app: tauri::AppHandle,
+    input_audio: String,
+    midi_path: String,
+    confidence: Option<f64>,
+    min_duration_sec: Option<f64>,
+    model: Option<String>,
+    force: Option<bool>,
+) -> Result<ExtractMelodyResult, String> {
+    let force = force.unwrap_or(false);
+
+    if !force && PathBuf::from(&midi_path).exists() {
+        return Ok(ExtractMelodyResult {
+            success: true,
+            exit_code: Some(0),
+            stdout: format!("cached: {}", midi_path),
+            stderr: String::new(),
+            midi_path,
+        });
+    }
+
+    let script = extract_melody_script();
+    if !script.exists() {
+        return Err(format!(
+            "extract_melody.py not found at {} — set PIPELINE_MELODY_SCRIPT or check your install",
+            script.to_string_lossy()
+        ));
+    }
+
+    let mut cmd = tokio::process::Command::new(&python_bin());
+    cmd.arg(&script)
+        .arg("--input")
+        .arg(&input_audio)
+        .arg("--output")
+        .arg(&midi_path)
+        .arg("--model")
+        .arg(model.unwrap_or_else(|| "full".to_string()))
+        .arg("--confidence")
+        .arg(format!("{}", confidence.unwrap_or(0.5)))
+        .arg("--min-duration")
+        .arg(format!("{}", min_duration_sec.unwrap_or(0.05)));
+
+    let (success, exit_code, stdout, stderr) =
+        run_with_progress(cmd, &app, "extract-melody:progress").await?;
+
+    Ok(ExtractMelodyResult {
+        success,
+        exit_code,
+        stdout,
+        stderr,
+        midi_path,
+    })
+}
+
+#[tauri::command]
+fn extract_melody_check() -> StageTool {
+    // Probe the helper script's dependency chain by running it with
+    // --help. That hits the late imports at the top of main() and
+    // surfaces a clean missing-dep message if torchcrepe/mido aren't
+    // installed.
+    let script = extract_melody_script();
+    if !script.exists() {
+        return StageTool {
+            found: false,
+            version: None,
+            error: Some(format!(
+                "extract_melody.py not at expected path: {}",
+                script.to_string_lossy()
+            )),
+        };
+    }
+    let out = Command::new(&python_bin())
+        .arg(&script)
+        .arg("--help")
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            // Cross-check torchcrepe importability separately so the
+            // "found: yes" message doesn't lie when the script's
+            // help text works but torchcrepe isn't installed.
+            // torchcrepe doesn't expose __version__, mido does on
+            // some versions but not all — just confirm import works.
+            let probe = Command::new(&python_bin())
+                .args([
+                    "-c",
+                    "import torchcrepe, mido; print('torchcrepe + mido ok')",
+                ])
+                .output();
+            match probe {
+                Ok(p) if p.status.success() => StageTool {
+                    found: true,
+                    version: Some(
+                        String::from_utf8_lossy(&p.stdout)
+                            .trim()
+                            .to_string(),
+                    ),
+                    error: None,
+                },
+                Ok(p) => StageTool {
+                    found: false,
+                    version: None,
+                    error: Some(format!(
+                        "torchcrepe / mido import failed:\n{}",
+                        String::from_utf8_lossy(&p.stderr).trim()
+                    )),
+                },
+                Err(e) => StageTool {
+                    found: false,
+                    version: None,
+                    error: Some(format!("could not probe torchcrepe: {}", e)),
+                },
+            }
+        }
+        Ok(o) => StageTool {
+            found: false,
+            version: None,
+            error: Some(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+        },
+        Err(e) => StageTool {
+            found: false,
+            version: None,
+            error: Some(format!("could not run python3 {}: {}",
+                                script.to_string_lossy(), e)),
+        },
+    }
+}
+
 /// Sanity-check that Demucs is installed and importable. Surfaces in
 /// the Pipeline UI so the producer knows whether to `pip install
 /// demucs` before kicking off a separation run.
@@ -1431,6 +1615,9 @@ pub fn run() {
             audio_separator_run,
             audio_separator_cache_status,
             audio_separator_check,
+            extract_melody_run,
+            extract_melody_cache_status,
+            extract_melody_check,
             load_review,
             publish_config,
             publish_song,
