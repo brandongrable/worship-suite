@@ -32,6 +32,22 @@ type WhisperXResult = {
   json_path: string;
 };
 
+type DeepFilterNetResult = {
+  success: boolean;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  output_path: string;
+};
+
+type AudioSeparatorResult = {
+  success: boolean;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  stems: string[];
+};
+
 type CacheStatus = {
   cached: boolean;
   artifact: string | null;
@@ -231,6 +247,32 @@ export default function App() {
   const [demucsErr, setDemucsErr] = useState<string | null>(null);
   const [demucsCache, setDemucsCache] = useState<CacheStatus | null>(null);
 
+  // Phase 7: DeepFilterNet noise suppression (chain step 2 — runs on
+  // Demucs's vocals.wav before MDX karaoke separation).
+  const [dfnCheck, setDfnCheck] = useState<StageTool | null>(null);
+  const [dfnChecking, setDfnChecking] = useState(false);
+  const [dfnInput, setDfnInput] = useState<string | null>(null);
+  const [dfnOutDir, setDfnOutDir] = useState<string | null>(null);
+  const [dfnAttenDb, setDfnAttenDb] = useState<number>(60);
+  const [dfnRunning, setDfnRunning] = useState(false);
+  const [dfnResult, setDfnResult] = useState<DeepFilterNetResult | null>(null);
+  const [dfnErr, setDfnErr] = useState<string | null>(null);
+  const [dfnCache, setDfnCache] = useState<CacheStatus | null>(null);
+
+  // Phase 7: audio-separator (UVR) — lead vs background vocal isolation
+  // (chain step 3 — runs on the denoised vocals from DeepFilterNet).
+  const [asepCheck, setAsepCheck] = useState<StageTool | null>(null);
+  const [asepChecking, setAsepChecking] = useState(false);
+  const [asepInput, setAsepInput] = useState<string | null>(null);
+  const [asepOutDir, setAsepOutDir] = useState<string | null>(null);
+  const [asepModel, setAsepModel] = useState<string>(
+    'UVR-MDX-NET-Inst_HQ_4.onnx',
+  );
+  const [asepRunning, setAsepRunning] = useState(false);
+  const [asepResult, setAsepResult] = useState<AudioSeparatorResult | null>(null);
+  const [asepErr, setAsepErr] = useState<string | null>(null);
+  const [asepCache, setAsepCache] = useState<CacheStatus | null>(null);
+
   // Phase 7: WhisperX transcription stage.
   const [whisperxCheck, setWhisperxCheck] = useState<StageTool | null>(null);
   const [whisperxChecking, setWhisperxChecking] = useState(false);
@@ -271,6 +313,32 @@ export default function App() {
       .then(setWhisperxCache)
       .catch(() => setWhisperxCache(null));
   }, [whisperxInput, whisperxOutDir]);
+
+  useEffect(() => {
+    if (!dfnInput || !dfnOutDir) {
+      setDfnCache(null);
+      return;
+    }
+    invoke<CacheStatus>('deepfilternet_cache_status', {
+      inputAudio: dfnInput,
+      outputDir: dfnOutDir,
+    })
+      .then(setDfnCache)
+      .catch(() => setDfnCache(null));
+  }, [dfnInput, dfnOutDir]);
+
+  useEffect(() => {
+    if (!asepInput || !asepOutDir) {
+      setAsepCache(null);
+      return;
+    }
+    invoke<CacheStatus>('audio_separator_cache_status', {
+      inputAudio: asepInput,
+      outputDir: asepOutDir,
+    })
+      .then(setAsepCache)
+      .catch(() => setAsepCache(null));
+  }, [asepInput, asepOutDir]);
 
   useEffect(() => {
     invoke<Health>('health_check').then(setHealth).catch((e) => setHealthErr(String(e)));
@@ -363,20 +431,121 @@ export default function App() {
       });
       setDemucsResult(r);
       // Auto-chain: if a vocals stem was produced, prefill it as
-      // WhisperX input + default the WhisperX output dir to the
-      // same parent.
+      // input to BOTH the next chain step (DeepFilterNet for noise
+      // cleanup) AND WhisperX (transcription). The producer can
+      // override either later; this is the default fast path.
       if (r.success) {
         const vocals = r.stems.find((p) => /vocals\.wav$/i.test(p));
-        if (vocals && !whisperxInput) setWhisperxInput(vocals);
-        if (vocals && !whisperxOutDir) {
+        if (vocals) {
           const sep = Math.max(vocals.lastIndexOf('/'), vocals.lastIndexOf('\\'));
-          if (sep > 0) setWhisperxOutDir(vocals.slice(0, sep));
+          const parentDir = sep > 0 ? vocals.slice(0, sep) : '';
+          if (!dfnInput) setDfnInput(vocals);
+          if (parentDir && !dfnOutDir) setDfnOutDir(parentDir);
+          if (!whisperxInput) setWhisperxInput(vocals);
+          if (parentDir && !whisperxOutDir) setWhisperxOutDir(parentDir);
         }
       }
     } catch (e) {
       setDemucsErr(String(e));
     } finally {
       setDemucsRunning(false);
+    }
+  }
+
+  async function detectDeepFilterNet() {
+    setDfnChecking(true);
+    try {
+      setDfnCheck(await invoke<StageTool>('deepfilternet_check'));
+    } catch (e) {
+      setDfnCheck({ found: false, version: null, error: String(e) });
+    } finally {
+      setDfnChecking(false);
+    }
+  }
+
+  async function detectAudioSeparator() {
+    setAsepChecking(true);
+    try {
+      setAsepCheck(await invoke<StageTool>('audio_separator_check'));
+    } catch (e) {
+      setAsepCheck({ found: false, version: null, error: String(e) });
+    } finally {
+      setAsepChecking(false);
+    }
+  }
+
+  async function pickDfnInput() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a', 'aac'] }],
+    });
+    if (typeof selected === 'string') setDfnInput(selected);
+  }
+
+  async function pickDfnOutDir() {
+    const selected = await openDialog({ directory: true, multiple: false });
+    if (typeof selected === 'string') setDfnOutDir(selected);
+  }
+
+  async function pickAsepInput() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a', 'aac'] }],
+    });
+    if (typeof selected === 'string') setAsepInput(selected);
+  }
+
+  async function pickAsepOutDir() {
+    const selected = await openDialog({ directory: true, multiple: false });
+    if (typeof selected === 'string') setAsepOutDir(selected);
+  }
+
+  async function runDeepFilterNet(force = false) {
+    if (!dfnInput || !dfnOutDir) return;
+    setDfnRunning(true);
+    setDfnResult(null);
+    setDfnErr(null);
+    try {
+      const r = await invoke<DeepFilterNetResult>('deepfilternet_run', {
+        inputAudio: dfnInput,
+        outputDir: dfnOutDir,
+        attenuationDb: dfnAttenDb,
+        force,
+      });
+      setDfnResult(r);
+      // Auto-chain: feed the denoised file into audio-separator.
+      if (r.success && r.output_path) {
+        if (!asepInput) setAsepInput(r.output_path);
+        const sep = Math.max(
+          r.output_path.lastIndexOf('/'),
+          r.output_path.lastIndexOf('\\'),
+        );
+        if (sep > 0 && !asepOutDir) setAsepOutDir(r.output_path.slice(0, sep));
+      }
+    } catch (e) {
+      setDfnErr(String(e));
+    } finally {
+      setDfnRunning(false);
+    }
+  }
+
+  async function runAudioSeparator(force = false) {
+    if (!asepInput || !asepOutDir) return;
+    setAsepRunning(true);
+    setAsepResult(null);
+    setAsepErr(null);
+    try {
+      const r = await invoke<AudioSeparatorResult>('audio_separator_run', {
+        inputAudio: asepInput,
+        outputDir: asepOutDir,
+        model: asepModel,
+        force,
+      });
+      setAsepResult(r);
+    } catch (e) {
+      setAsepErr(String(e));
+    } finally {
+      setAsepRunning(false);
     }
   }
 
@@ -730,6 +899,207 @@ export default function App() {
               </ul>
             )}
             {demucsResult.stderr && <pre className="log error-text">{demucsResult.stderr}</pre>}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <h2>DeepFilterNet — noise suppression</h2>
+          <button className="btn" onClick={detectDeepFilterNet} disabled={dfnChecking}>
+            {dfnChecking ? 'Probing…' : 'Check install'}
+          </button>
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.55)',
+            fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+            fontStyle: 'italic',
+            marginBottom: 10,
+          }}
+        >
+          Chain step 2 · cleans audience noise / HVAC / room hum from
+          the Demucs vocals stem · output feeds audio-separator
+        </div>
+        {dfnCheck && (
+          <ul className="kv">
+            <li><span className="k">found</span><span className="v">{dfnCheck.found ? 'yes' : 'no'}</span></li>
+            {dfnCheck.version && <li><span className="k">bin</span><span className="v">{dfnCheck.version}</span></li>}
+            {dfnCheck.error && <li><span className="k">error</span><span className="v error-text">{dfnCheck.error}</span></li>}
+          </ul>
+        )}
+        <div className="picker-grid">
+          <PickerRow label="input audio" value={dfnInput} onPick={pickDfnInput} disabled={dfnRunning} />
+          <PickerRow label="output dir" value={dfnOutDir} onPick={pickDfnOutDir} disabled={dfnRunning} />
+          <div className="picker-row">
+            <span className="picker-label">atten dB</span>
+            <input
+              className="picker-input"
+              type="number"
+              min={20}
+              max={120}
+              step={5}
+              value={dfnAttenDb}
+              disabled={dfnRunning}
+              onChange={(e) => setDfnAttenDb(Number(e.target.value))}
+              title="Lower (40-60) for sustained sung vocals; higher (80-100) for spoken/talky takes. Default 60 is a safe middle ground for worship."
+            />
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.55)',
+              fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+              marginTop: 2,
+              marginLeft: 4,
+              fontStyle: 'italic',
+            }}
+          >
+            {dfnAttenDb >= 80
+              ? 'Aggressive · best for spoken/talky audio · may soften held notes'
+              : dfnAttenDb >= 50
+                ? 'Balanced · safe default for worship vocals'
+                : 'Gentle · preserves vocal tone, removes less noise'}
+          </div>
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            className="btn primary"
+            onClick={() => runDeepFilterNet(false)}
+            disabled={!dfnInput || !dfnOutDir || dfnRunning}
+          >
+            {dfnRunning
+              ? 'Denoising…'
+              : dfnCache?.cached
+                ? 'Use cached'
+                : 'Run DeepFilterNet'}
+          </button>
+          {dfnCache?.cached && (
+            <>
+              <span style={{ fontSize: 12, color: '#5B8C3E', fontFamily: 'monospace' }}>
+                ✓ cached: {dfnCache.artifact}
+              </span>
+              <button
+                className="btn"
+                onClick={() => runDeepFilterNet(true)}
+                disabled={dfnRunning}
+              >
+                Re-run
+              </button>
+            </>
+          )}
+        </div>
+        <RunningIndicator
+          active={dfnRunning}
+          label={`Denoising at ${dfnAttenDb}dB attenuation…`}
+          accent="cyan"
+        />
+        {dfnErr && <div className="error">{dfnErr}</div>}
+        {dfnResult && (
+          <div style={{ marginTop: 12 }}>
+            <ul className="kv">
+              <li><span className="k">success</span><span className="v">{dfnResult.success ? 'yes' : 'no'}</span></li>
+              {dfnResult.exit_code != null && <li><span className="k">exit</span><span className="v">{dfnResult.exit_code}</span></li>}
+              {dfnResult.output_path && <li><span className="k">output</span><span className="v">{dfnResult.output_path}</span></li>}
+            </ul>
+            {dfnResult.stderr && <pre className="log error-text">{dfnResult.stderr}</pre>}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="card-head">
+          <h2>audio-separator (UVR) — lead vs background vocals</h2>
+          <button className="btn" onClick={detectAudioSeparator} disabled={asepChecking}>
+            {asepChecking ? 'Probing…' : 'Check install'}
+          </button>
+        </div>
+        <div
+          style={{
+            fontSize: 11,
+            color: 'rgba(255,255,255,0.55)',
+            fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+            fontStyle: 'italic',
+            marginBottom: 10,
+          }}
+        >
+          Chain step 3 · isolates lead vocal from choir/backing vocal
+          bleed · runs UVR's MDX-Net models · downloads weights on first use
+        </div>
+        {asepCheck && (
+          <ul className="kv">
+            <li><span className="k">found</span><span className="v">{asepCheck.found ? 'yes' : 'no'}</span></li>
+            {asepCheck.version && <li><span className="k">bin</span><span className="v">{asepCheck.version}</span></li>}
+            {asepCheck.error && <li><span className="k">error</span><span className="v error-text">{asepCheck.error}</span></li>}
+          </ul>
+        )}
+        <div className="picker-grid">
+          <PickerRow label="input audio" value={asepInput} onPick={pickAsepInput} disabled={asepRunning} />
+          <PickerRow label="output dir" value={asepOutDir} onPick={pickAsepOutDir} disabled={asepRunning} />
+          <div className="picker-row">
+            <span className="picker-label">model</span>
+            <select
+              className="picker-input"
+              value={asepModel}
+              disabled={asepRunning}
+              onChange={(e) => setAsepModel(e.target.value)}
+            >
+              <option value="UVR-MDX-NET-Inst_HQ_4.onnx">UVR-MDX-NET-Inst_HQ_4 · best general vocal</option>
+              <option value="UVR_MDXNET_KARA_2.onnx">UVR_MDXNET_KARA_2 · karaoke (lead vs backings)</option>
+              <option value="UVR-MDX-NET-Voc_FT.onnx">UVR-MDX-NET-Voc_FT · fine-tuned vocal</option>
+              <option value="Kim_Vocal_2.onnx">Kim_Vocal_2 · clean vocal isolation</option>
+              <option value="MDX23C-8KFFT-InstVoc_HQ.ckpt">MDX23C-8KFFT-InstVoc_HQ · newest, slow + best</option>
+            </select>
+          </div>
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            className="btn primary"
+            onClick={() => runAudioSeparator(false)}
+            disabled={!asepInput || !asepOutDir || asepRunning}
+          >
+            {asepRunning
+              ? 'Isolating…'
+              : asepCache?.cached
+                ? 'Use cached'
+                : 'Run audio-separator'}
+          </button>
+          {asepCache?.cached && (
+            <>
+              <span style={{ fontSize: 12, color: '#5B8C3E', fontFamily: 'monospace' }}>
+                ✓ cached · {asepCache.detail.length} stem(s)
+              </span>
+              <button
+                className="btn"
+                onClick={() => runAudioSeparator(true)}
+                disabled={asepRunning}
+              >
+                Re-run
+              </button>
+            </>
+          )}
+        </div>
+        <RunningIndicator
+          active={asepRunning}
+          label={`Running ${asepModel.replace(/\.[a-z]+$/, '')}…`}
+          accent="cyan"
+        />
+        {asepErr && <div className="error">{asepErr}</div>}
+        {asepResult && (
+          <div style={{ marginTop: 12 }}>
+            <ul className="kv">
+              <li><span className="k">success</span><span className="v">{asepResult.success ? 'yes' : 'no'}</span></li>
+              {asepResult.exit_code != null && <li><span className="k">exit</span><span className="v">{asepResult.exit_code}</span></li>}
+            </ul>
+            {asepResult.stems.length > 0 && (
+              <ul className="kv">
+                {asepResult.stems.map((s) => (
+                  <li key={s}><span className="k">stem</span><span className="v">{s}</span></li>
+                ))}
+              </ul>
+            )}
+            {asepResult.stderr && <pre className="log error-text">{asepResult.stderr}</pre>}
           </div>
         )}
       </section>

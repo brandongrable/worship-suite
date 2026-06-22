@@ -400,6 +400,340 @@ struct StageTool {
     error: Option<String>,
 }
 
+// ============================================================
+// DeepFilterNet — broadband noise suppression
+// ============================================================
+
+#[derive(Serialize)]
+struct DeepFilterNetResult {
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    /// Absolute path to the produced denoised audio file. Empty
+    /// when the run failed.
+    output_path: String,
+}
+
+fn deepfilter_output_path(input_audio: &str, output_dir: &str) -> PathBuf {
+    let stem = PathBuf::from(input_audio)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    // deepFilter writes `<stem>_DeepFilterNet3.wav` by default.
+    // We accept either the v3 or v2 naming on cache lookup; only
+    // the v3 path is returned from a fresh run.
+    PathBuf::from(output_dir).join(format!("{}_DeepFilterNet3.wav", stem))
+}
+
+fn deepfilter_legacy_output_paths(input_audio: &str, output_dir: &str) -> Vec<PathBuf> {
+    let stem = PathBuf::from(input_audio)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    vec![
+        PathBuf::from(output_dir).join(format!("{}_DeepFilterNet3.wav", stem)),
+        PathBuf::from(output_dir).join(format!("{}_DeepFilterNet2.wav", stem)),
+        PathBuf::from(output_dir).join(format!("{}_DeepFilterNet.wav", stem)),
+    ]
+}
+
+#[tauri::command]
+fn deepfilternet_cache_status(input_audio: String, output_dir: String) -> CacheStatus {
+    for candidate in deepfilter_legacy_output_paths(&input_audio, &output_dir) {
+        if candidate.exists() {
+            return CacheStatus {
+                cached: true,
+                artifact: Some(candidate.to_string_lossy().to_string()),
+                detail: vec![],
+            };
+        }
+    }
+    CacheStatus { cached: false, artifact: None, detail: vec![] }
+}
+
+/// Path to the `deepFilter` CLI. Defaults to the bin directory of
+/// PIPELINE_PYTHON_BIN if set, otherwise PATH lookup.
+fn deepfilter_bin() -> String {
+    if let Ok(p) = env::var("PIPELINE_DEEPFILTER_BIN") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    // Try to derive from python_bin (most pip-installed CLIs live
+    // next to the python interpreter that installed them).
+    let python = python_bin();
+    let parent = PathBuf::from(&python).parent().map(PathBuf::from);
+    if let Some(p) = parent {
+        let candidate = p.join("deepFilter");
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+    "deepFilter".to_string()
+}
+
+/// Run DeepFilterNet to suppress broadband noise (audience, HVAC,
+/// room hum) on an audio file — typically the vocals stem coming
+/// out of Demucs, before the karaoke separator runs.
+///
+/// `attenuation_db` controls how aggressively quiet noise is
+/// removed (positive number; higher = more aggressive). Default 100
+/// matches the CLI default; drop to 40-60 for sustained sung vocals
+/// where the speech-trained model can otherwise soften held notes.
+#[tauri::command]
+fn deepfilternet_run(
+    input_audio: String,
+    output_dir: String,
+    attenuation_db: Option<f64>,
+    force: Option<bool>,
+) -> Result<DeepFilterNetResult, String> {
+    let force = force.unwrap_or(false);
+    let expected = deepfilter_output_path(&input_audio, &output_dir);
+
+    if !force {
+        for candidate in deepfilter_legacy_output_paths(&input_audio, &output_dir) {
+            if candidate.exists() {
+                return Ok(DeepFilterNetResult {
+                    success: true,
+                    exit_code: Some(0),
+                    stdout: format!("cached: {}", candidate.to_string_lossy()),
+                    stderr: String::new(),
+                    output_path: candidate.to_string_lossy().to_string(),
+                });
+            }
+        }
+    }
+
+    let mut cmd = Command::new(deepfilter_bin());
+    cmd.arg(&input_audio)
+        .arg("--output-dir")
+        .arg(&output_dir);
+    if let Some(db) = attenuation_db {
+        cmd.arg("--attenuation-limit").arg(format!("{}", db));
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to spawn deepFilter: {}", e))?;
+
+    Ok(DeepFilterNetResult {
+        success: output.status.success(),
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        output_path: expected.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+fn deepfilternet_check() -> StageTool {
+    let bin = deepfilter_bin();
+    match Command::new(&bin).arg("--help").output() {
+        Ok(out) if out.status.success() => {
+            // CLI doesn't print a clean version banner; surface the
+            // resolved binary path so the producer can confirm we're
+            // using their installed one.
+            StageTool {
+                found: true,
+                version: Some(bin),
+                error: None,
+            }
+        }
+        Ok(out) => StageTool {
+            found: false,
+            version: None,
+            error: Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        },
+        Err(e) => StageTool {
+            found: false,
+            version: None,
+            error: Some(format!("could not spawn deepFilter ({}): {}", bin, e)),
+        },
+    }
+}
+
+// ============================================================
+// audio-separator (UVR CLI) — lead vs background vocal isolation
+// ============================================================
+
+#[derive(Serialize)]
+struct AudioSeparatorResult {
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    /// Absolute paths to the produced stem files. Typically a
+    /// "(Vocals)" and "(Instrumental)" pair for vocal models, or a
+    /// "(Lead Vocals)" and "(Backing Vocals)" pair for karaoke
+    /// models — depends on the model.
+    stems: Vec<String>,
+}
+
+fn list_audio_separator_outputs(dir: &std::path::Path, input_stem: &str) -> Vec<String> {
+    fs::read_dir(dir)
+        .ok()
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    // audio-separator writes `<stem>_(Vocals)_<model>.wav`
+                    // and similar. Match on the input stem prefix.
+                    name.starts_with(input_stem)
+                        && p.extension().and_then(|x| x.to_str()) == Some("wav")
+                })
+                .map(|p| p.to_string_lossy().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn audio_separator_bin() -> String {
+    if let Ok(p) = env::var("PIPELINE_AUDIO_SEPARATOR_BIN") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    let python = python_bin();
+    let parent = PathBuf::from(&python).parent().map(PathBuf::from);
+    if let Some(p) = parent {
+        let candidate = p.join("audio-separator");
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+    "audio-separator".to_string()
+}
+
+#[tauri::command]
+fn audio_separator_cache_status(input_audio: String, output_dir: String) -> CacheStatus {
+    let input_stem = PathBuf::from(&input_audio)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let outs = list_audio_separator_outputs(&PathBuf::from(&output_dir), &input_stem);
+    if outs.is_empty() {
+        CacheStatus { cached: false, artifact: None, detail: vec![] }
+    } else {
+        CacheStatus {
+            cached: true,
+            artifact: Some(output_dir.clone()),
+            detail: outs,
+        }
+    }
+}
+
+/// Run audio-separator (UVR's CLI) for lead-vs-backing vocal
+/// isolation. Default model is `MDX23C-De-Reverb-aufr33-jarredou.ckpt`
+/// — a karaoke-style separator that's strong on choir bleed and
+/// reverb.
+///
+/// Other useful models the producer might want to try:
+///   - "MDX23C-8KFFT-InstVoc_HQ.ckpt"
+///   - "UVR-MDX-NET-Karaoke_2.onnx"
+///   - "UVR_MDXNET_KARA_2.onnx"
+#[tauri::command]
+fn audio_separator_run(
+    input_audio: String,
+    output_dir: String,
+    model: Option<String>,
+    force: Option<bool>,
+) -> Result<AudioSeparatorResult, String> {
+    let model = model.unwrap_or_else(|| "UVR-MDX-NET-Inst_HQ_4.onnx".to_string());
+    let force = force.unwrap_or(false);
+    let input_stem = PathBuf::from(&input_audio)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    if !force {
+        let existing = list_audio_separator_outputs(&PathBuf::from(&output_dir), &input_stem);
+        if !existing.is_empty() {
+            return Ok(AudioSeparatorResult {
+                success: true,
+                exit_code: Some(0),
+                stdout: format!("cached: {} stem(s) in {}", existing.len(), output_dir),
+                stderr: String::new(),
+                stems: existing,
+            });
+        }
+    }
+
+    let mut cmd = Command::new(audio_separator_bin());
+    cmd.arg(&input_audio)
+        .arg("--output_dir")
+        .arg(&output_dir)
+        .arg("--model_filename")
+        .arg(&model);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("failed to spawn audio-separator: {}", e))?;
+
+    let stems = list_audio_separator_outputs(&PathBuf::from(&output_dir), &input_stem);
+
+    Ok(AudioSeparatorResult {
+        success: output.status.success(),
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        stems,
+    })
+}
+
+#[tauri::command]
+fn audio_separator_check() -> StageTool {
+    let bin = audio_separator_bin();
+    match Command::new(&bin).arg("--env_info").output() {
+        Ok(out) if out.status.success() => {
+            let first_line = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            StageTool {
+                found: true,
+                version: if first_line.is_empty() {
+                    Some(bin)
+                } else {
+                    Some(first_line)
+                },
+                error: None,
+            }
+        }
+        Ok(_) => {
+            // --env_info isn't in older versions; fall back to --help.
+            match Command::new(&bin).arg("--help").output() {
+                Ok(out) if out.status.success() => StageTool {
+                    found: true,
+                    version: Some(bin),
+                    error: None,
+                },
+                Ok(out) => StageTool {
+                    found: false,
+                    version: None,
+                    error: Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+                },
+                Err(e) => StageTool {
+                    found: false,
+                    version: None,
+                    error: Some(format!("could not spawn audio-separator ({}): {}", bin, e)),
+                },
+            }
+        }
+        Err(e) => StageTool {
+            found: false,
+            version: None,
+            error: Some(format!("could not spawn audio-separator ({}): {}", bin, e)),
+        },
+    }
+}
+
 /// Sanity-check that Demucs is installed and importable. Surfaces in
 /// the Pipeline UI so the producer knows whether to `pip install
 /// demucs` before kicking off a separation run.
@@ -946,6 +1280,12 @@ pub fn run() {
             whisperx_cache_status,
             demucs_check,
             whisperx_check,
+            deepfilternet_run,
+            deepfilternet_cache_status,
+            deepfilternet_check,
+            audio_separator_run,
+            audio_separator_cache_status,
+            audio_separator_check,
             load_review,
             publish_config,
             publish_song,
