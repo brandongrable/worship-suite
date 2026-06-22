@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useEffect, useState } from 'react';
@@ -246,6 +247,7 @@ export default function App() {
   const [demucsResult, setDemucsResult] = useState<DemucsResult | null>(null);
   const [demucsErr, setDemucsErr] = useState<string | null>(null);
   const [demucsCache, setDemucsCache] = useState<CacheStatus | null>(null);
+  const [demucsPercent, setDemucsPercent] = useState<number | null>(null);
 
   // Phase 7: DeepFilterNet noise suppression (chain step 2 — runs on
   // Demucs's vocals.wav before MDX karaoke separation).
@@ -274,6 +276,7 @@ export default function App() {
   const [asepResult, setAsepResult] = useState<AudioSeparatorResult | null>(null);
   const [asepErr, setAsepErr] = useState<string | null>(null);
   const [asepCache, setAsepCache] = useState<CacheStatus | null>(null);
+  const [asepPercent, setAsepPercent] = useState<number | null>(null);
 
   // Phase 7: WhisperX transcription stage.
   const [whisperxCheck, setWhisperxCheck] = useState<StageTool | null>(null);
@@ -341,6 +344,31 @@ export default function App() {
       .then(setAsepCache)
       .catch(() => setAsepCache(null));
   }, [asepInput, asepOutDir]);
+
+  // Subscribe to Tauri progress events emitted by the streaming
+  // subprocess wrappers (demucs_separate, audio_separator_run). The
+  // listeners survive the component's lifetime; each new Run resets
+  // the percent state to null first, then the events drive it back
+  // up. `listen` returns an unsubscribe handle that we call on
+  // unmount.
+  useEffect(() => {
+    let unsubDemucs: (() => void) | undefined;
+    let unsubAsep: (() => void) | undefined;
+    listen<{ percent: number; line: string }>('demucs:progress', (event) => {
+      setDemucsPercent(event.payload.percent);
+    }).then((u) => {
+      unsubDemucs = u;
+    });
+    listen<{ percent: number; line: string }>('audio-separator:progress', (event) => {
+      setAsepPercent(event.payload.percent);
+    }).then((u) => {
+      unsubAsep = u;
+    });
+    return () => {
+      unsubDemucs?.();
+      unsubAsep?.();
+    };
+  }, []);
 
   useEffect(() => {
     invoke<Health>('health_check').then(setHealth).catch((e) => setHealthErr(String(e)));
@@ -423,6 +451,7 @@ export default function App() {
     setDemucsRunning(true);
     setDemucsResult(null);
     setDemucsErr(null);
+    setDemucsPercent(0);
     try {
       const r = await invoke<DemucsResult>('demucs_separate', {
         inputAudio: demucsInput,
@@ -536,6 +565,7 @@ export default function App() {
     setAsepRunning(true);
     setAsepResult(null);
     setAsepErr(null);
+    setAsepPercent(0);
     try {
       const r = await invoke<AudioSeparatorResult>('audio_separator_run', {
         inputAudio: asepInput,
@@ -882,8 +912,9 @@ export default function App() {
         </div>
         <RunningIndicator
           active={demucsRunning}
-          label={`Separating with ${demucsModel}… (CPU work, takes minutes)`}
+          label={`Separating with ${demucsModel}…`}
           accent="cyan"
+          percent={demucsPercent}
         />
         {demucsErr && <div className="error">{demucsErr}</div>}
         {demucsResult && (
@@ -1102,6 +1133,7 @@ export default function App() {
           active={asepRunning}
           label={`Running ${asepModel.replace(/\.[a-z]+$/, '')}…`}
           accent="cyan"
+          percent={asepPercent}
         />
         {asepErr && <div className="error">{asepErr}</div>}
         {asepResult && (
@@ -1613,10 +1645,18 @@ function RunningIndicator({
   active,
   label,
   accent = 'cyan',
+  percent = null,
 }: {
   active: boolean;
   label: string;
   accent?: 'cyan' | 'amber' | 'lavender';
+  /**
+   * 0-100. When provided, the bar fills determinately (real progress
+   * from a subprocess streaming tqdm output). When null, the bar
+   * uses the indeterminate marquee animation. Either way the
+   * spinner + elapsed counter still render.
+   */
+  percent?: number | null;
 }) {
   const [startMs, setStartMs] = useState<number | null>(null);
   const [now, setNow] = useState<number>(Date.now());
@@ -1643,11 +1683,23 @@ function RunningIndicator({
       : accent === 'lavender'
         ? 'running running-lavender'
         : 'running';
+  const hasPercent = percent != null;
+  const barCls = hasPercent ? 'bar bar-determinate' : 'bar';
   return (
     <div className={cls} role="status" aria-live="polite">
       <span className="spinner" />
       <span className="label">{label}</span>
-      <span className="bar" />
+      <span className={barCls}>
+        {hasPercent && (
+          <span
+            className="bar-fill"
+            style={{ width: `${Math.max(0, Math.min(100, percent!))}%` }}
+          />
+        )}
+      </span>
+      {hasPercent && (
+        <span className="percent">{Math.round(percent!)}%</span>
+      )}
       <span className="elapsed">
         {mm}:{ss}
       </span>

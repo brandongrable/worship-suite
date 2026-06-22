@@ -4,6 +4,147 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::process::Stdio;
+use tauri::Emitter;
+use tokio::io::AsyncReadExt;
+
+/// Progress payload emitted to the frontend as a Tauri event during
+/// a long-running subprocess. `percent` is 0-100, parsed from the
+/// stage's tqdm-style stderr output. `line` is the raw line for
+/// debugging / display.
+#[derive(Clone, Serialize)]
+struct StageProgress {
+    percent: f64,
+    line: String,
+}
+
+/// Scan a string for the first occurrence of an integer or decimal
+/// percentage (e.g. "  47%|████"). Returns None when no match.
+fn parse_tqdm_percent(s: &str) -> Option<f64> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c.is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'%' {
+                if let Ok(n) = s[start..i].parse::<f64>() {
+                    if (0.0..=100.0).contains(&n) {
+                        return Some(n);
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Drive a subprocess that emits tqdm-style progress on stderr,
+/// publishing a `StageProgress` Tauri event under `event_name` for
+/// each "\r"-terminated update. Returns (success, exit_code,
+/// captured_stdout, captured_stderr) on completion.
+///
+/// tqdm prints `0%|... 47%|... 100%|...` separated by carriage
+/// returns (no newline until the bar finishes). std's BufRead::lines
+/// won't see those updates because it splits on \n. We use
+/// AsyncReadExt::read_buf and split on \r OR \n manually.
+async fn run_with_progress(
+    mut command: tokio::process::Command,
+    app: &tauri::AppHandle,
+    event_name: &'static str,
+) -> Result<(bool, Option<i32>, String, String), String> {
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("failed to spawn subprocess: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("no stdout pipe")?;
+    let stderr = child.stderr.take().ok_or("no stderr pipe")?;
+
+    let app_for_stderr = app.clone();
+    let stderr_handle = tokio::spawn(async move {
+        let mut reader = stderr;
+        let mut buf = Vec::with_capacity(4096);
+        let mut chunk = [0u8; 1024];
+        let mut all = String::new();
+        let mut last_percent_emitted: f64 = -1.0;
+        loop {
+            let n = match reader.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+
+            // Walk the buffer for \r or \n terminators and emit each
+            // completed line. Anything trailing without a terminator
+            // stays in `buf` for the next read.
+            let mut start = 0;
+            for i in 0..buf.len() {
+                let c = buf[i];
+                if c == b'\r' || c == b'\n' {
+                    if i > start {
+                        let line = String::from_utf8_lossy(&buf[start..i]).to_string();
+                        all.push_str(&line);
+                        all.push('\n');
+                        if let Some(p) = parse_tqdm_percent(&line) {
+                            // Only emit when the percent has moved at
+                            // least 1 point — keeps the event volume
+                            // sane on long bars.
+                            if (p - last_percent_emitted).abs() >= 1.0 {
+                                let _ = app_for_stderr.emit(
+                                    event_name,
+                                    StageProgress { percent: p, line: line.clone() },
+                                );
+                                last_percent_emitted = p;
+                            }
+                        }
+                    }
+                    start = i + 1;
+                }
+            }
+            if start > 0 {
+                buf.drain(..start);
+            }
+        }
+        // Flush any trailing un-terminated content.
+        if !buf.is_empty() {
+            let line = String::from_utf8_lossy(&buf).to_string();
+            all.push_str(&line);
+        }
+        all
+    });
+
+    let stdout_handle = tokio::spawn(async move {
+        let mut reader = stdout;
+        let mut out = String::new();
+        let _ = reader.read_to_string(&mut out).await;
+        out
+    });
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("wait failed: {}", e))?;
+    let stdout_text = stdout_handle.await.unwrap_or_default();
+    let stderr_text = stderr_handle.await.unwrap_or_default();
+
+    // Final 100% event so the bar always lands at 100 on success.
+    if status.success() {
+        let _ = app.emit(
+            event_name,
+            StageProgress { percent: 100.0, line: "complete".to_string() },
+        );
+    }
+
+    Ok((status.success(), status.code(), stdout_text, stderr_text))
+}
 
 /// Path to the Python interpreter Pipeline shells out to. Defaults
 /// to `python3` (PATH lookup); the producer can override via
@@ -244,7 +385,8 @@ fn demucs_cache_status(
 /// concrete file paths so the UI doesn't need to reproduce the
 /// naming convention.
 #[tauri::command]
-fn demucs_separate(
+async fn demucs_separate(
+    app: tauri::AppHandle,
     input_audio: String,
     output_dir: String,
     model: Option<String>,
@@ -273,7 +415,7 @@ fn demucs_separate(
         }
     }
 
-    let mut cmd = Command::new(&python_bin());
+    let mut cmd = tokio::process::Command::new(&python_bin());
     cmd.arg("-m")
         .arg("demucs")
         .arg("-n")
@@ -284,17 +426,17 @@ fn demucs_separate(
         cmd.arg("--two-stems").arg("vocals");
     }
     cmd.arg(&input_audio);
-    let output = cmd
-        .output()
-        .map_err(|e| format!("failed to spawn python3: {}", e))?;
+
+    let (success, exit_code, stdout, stderr) =
+        run_with_progress(cmd, &app, "demucs:progress").await?;
 
     let stems = list_demucs_stems(&stems_dir);
 
     Ok(DemucsResult {
-        success: output.status.success(),
-        exit_code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        success,
+        exit_code,
+        stdout,
+        stderr,
         output_dir: stems_dir.to_string_lossy().to_string(),
         stems,
     })
@@ -639,7 +781,8 @@ fn audio_separator_cache_status(input_audio: String, output_dir: String) -> Cach
 ///   - "UVR-MDX-NET-Karaoke_2.onnx"
 ///   - "UVR_MDXNET_KARA_2.onnx"
 #[tauri::command]
-fn audio_separator_run(
+async fn audio_separator_run(
+    app: tauri::AppHandle,
     input_audio: String,
     output_dir: String,
     model: Option<String>,
@@ -666,23 +809,23 @@ fn audio_separator_run(
         }
     }
 
-    let mut cmd = Command::new(audio_separator_bin());
+    let mut cmd = tokio::process::Command::new(audio_separator_bin());
     cmd.arg(&input_audio)
         .arg("--output_dir")
         .arg(&output_dir)
         .arg("--model_filename")
         .arg(&model);
-    let output = cmd
-        .output()
-        .map_err(|e| format!("failed to spawn audio-separator: {}", e))?;
+
+    let (success, exit_code, stdout, stderr) =
+        run_with_progress(cmd, &app, "audio-separator:progress").await?;
 
     let stems = list_audio_separator_outputs(&PathBuf::from(&output_dir), &input_stem);
 
     Ok(AudioSeparatorResult {
-        success: output.status.success(),
-        exit_code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        success,
+        exit_code,
+        stdout,
+        stderr,
         stems,
     })
 }

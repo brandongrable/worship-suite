@@ -25,4 +25,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", features = ["json"] }
 dotenvy = "0.15"
+# Async subprocess + line streaming so we can pipe Demucs / audio-
+# separator tqdm output to Tauri events as it arrives. `io-util`
+# gives us AsyncReadExt::read_until for handling tqdm's \r-based
+# in-place updates.
+tokio = { version = "1", features = ["process", "io-util", "macros", "rt", "rt-multi-thread"] }
 

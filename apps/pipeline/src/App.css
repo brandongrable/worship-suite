@@ -469,6 +469,31 @@ summary {
   animation: marquee 1.4s ease-in-out infinite;
 }
 
+/* Determinate variant — no marquee animation; the .bar-fill child
+   widens to the real percentage instead. Used by Demucs and audio-
+   separator while their tqdm progress events stream in. */
+.running .bar-determinate::after {
+  content: none;
+}
+
+.running .bar-fill {
+  display: block;
+  height: 100%;
+  background: #4FBCD0;
+  border-radius: 2px;
+  transition: width 0.25s ease;
+  box-shadow: 0 0 6px rgba(79, 188, 208, 0.6);
+}
+
+.running .percent {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+  text-align: right;
+  color: #4FBCD0;
+  font-weight: 600;
+}
+
 .running .elapsed {
   flex-shrink: 0;
   color: rgba(255, 255, 255, 0.55);
