@@ -265,8 +265,10 @@ export default function App() {
   const [asepChecking, setAsepChecking] = useState(false);
   const [asepInput, setAsepInput] = useState<string | null>(null);
   const [asepOutDir, setAsepOutDir] = useState<string | null>(null);
+  // Default to the karaoke model — the producer asked for lead-vs-
+  // backing-vocal separation, and that's what KARA_2 is built for.
   const [asepModel, setAsepModel] = useState<string>(
-    'UVR-MDX-NET-Inst_HQ_4.onnx',
+    'UVR_MDXNET_KARA_2.onnx',
   );
   const [asepRunning, setAsepRunning] = useState(false);
   const [asepResult, setAsepResult] = useState<AudioSeparatorResult | null>(null);
@@ -1044,13 +1046,29 @@ export default function App() {
               value={asepModel}
               disabled={asepRunning}
               onChange={(e) => setAsepModel(e.target.value)}
+              title="Karaoke models (KARA_2, karokee) isolate LEAD vocal from background vocals. General vocal models (MDX-Inst, Kim) just isolate ALL vocals from any remaining instruments."
             >
-              <option value="UVR-MDX-NET-Inst_HQ_4.onnx">UVR-MDX-NET-Inst_HQ_4 · best general vocal</option>
-              <option value="UVR_MDXNET_KARA_2.onnx">UVR_MDXNET_KARA_2 · karaoke (lead vs backings)</option>
-              <option value="UVR-MDX-NET-Voc_FT.onnx">UVR-MDX-NET-Voc_FT · fine-tuned vocal</option>
-              <option value="Kim_Vocal_2.onnx">Kim_Vocal_2 · clean vocal isolation</option>
-              <option value="MDX23C-8KFFT-InstVoc_HQ.ckpt">MDX23C-8KFFT-InstVoc_HQ · newest, slow + best</option>
+              <option value="UVR_MDXNET_KARA_2.onnx">UVR_MDXNET_KARA_2 · ★ karaoke · lead vs backings</option>
+              <option value="model_bs_roformer_ep_317_sdr_12.9755.ckpt">BS-Roformer · newest default · slow but best vocal</option>
+              <option value="UVR-MDX-NET-Inst_HQ_4.onnx">UVR-MDX-NET-Inst_HQ_4 · clean vocal isolation</option>
+              <option value="UVR-MDX-NET-Voc_FT.onnx">UVR-MDX-NET-Voc_FT · fine-tuned vocal isolation</option>
+              <option value="Kim_Vocal_2.onnx">Kim_Vocal_2 · alt vocal isolation</option>
+              <option value="MDX23C-8KFFT-InstVoc_HQ.ckpt">MDX23C-8KFFT-InstVoc_HQ · alt newest</option>
             </select>
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.55)',
+              fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+              marginTop: 2,
+              marginLeft: 4,
+              fontStyle: 'italic',
+            }}
+          >
+            {/karaoke|kara/i.test(asepModel)
+              ? 'Karaoke model · separates LEAD vocal from background vocals'
+              : 'Vocal isolation · pulls all vocals away from any remaining instruments'}
           </div>
         </div>
         <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>

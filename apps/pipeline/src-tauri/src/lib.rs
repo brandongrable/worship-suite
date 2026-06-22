@@ -421,10 +421,10 @@ fn deepfilter_output_path(input_audio: &str, output_dir: &str) -> PathBuf {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_string();
-    // deepFilter writes `<stem>_DeepFilterNet3.wav` by default.
-    // We accept either the v3 or v2 naming on cache lookup; only
-    // the v3 path is returned from a fresh run.
-    PathBuf::from(output_dir).join(format!("{}_DeepFilterNet3.wav", stem))
+    // deepFilter (the CLI from `deepfilternet` on PyPI) defaults to
+    // the DeepFilterNet2 model, which writes
+    // `<stem>_DeepFilterNet2.wav`. v3 is opt-in via --model-base-dir.
+    PathBuf::from(output_dir).join(format!("{}_DeepFilterNet2.wav", stem))
 }
 
 fn deepfilter_legacy_output_paths(input_audio: &str, output_dir: &str) -> Vec<PathBuf> {
@@ -433,9 +433,11 @@ fn deepfilter_legacy_output_paths(input_audio: &str, output_dir: &str) -> Vec<Pa
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_string();
+    // Probe all model-version suffixes; the CLI's default is v2 but
+    // future model upgrades may bump it.
     vec![
-        PathBuf::from(output_dir).join(format!("{}_DeepFilterNet3.wav", stem)),
         PathBuf::from(output_dir).join(format!("{}_DeepFilterNet2.wav", stem)),
+        PathBuf::from(output_dir).join(format!("{}_DeepFilterNet3.wav", stem)),
         PathBuf::from(output_dir).join(format!("{}_DeepFilterNet.wav", stem)),
     ]
 }
@@ -508,12 +510,12 @@ fn deepfilternet_run(
     }
 
     let mut cmd = Command::new(deepfilter_bin());
-    cmd.arg(&input_audio)
-        .arg("--output-dir")
+    cmd.arg("--output-dir")
         .arg(&output_dir);
     if let Some(db) = attenuation_db {
-        cmd.arg("--attenuation-limit").arg(format!("{}", db));
+        cmd.arg("--atten-lim").arg(format!("{}", db));
     }
+    cmd.arg(&input_audio);
     let output = cmd
         .output()
         .map_err(|e| format!("failed to spawn deepFilter: {}", e))?;
@@ -643,7 +645,7 @@ fn audio_separator_run(
     model: Option<String>,
     force: Option<bool>,
 ) -> Result<AudioSeparatorResult, String> {
-    let model = model.unwrap_or_else(|| "UVR-MDX-NET-Inst_HQ_4.onnx".to_string());
+    let model = model.unwrap_or_else(|| "UVR_MDXNET_KARA_2.onnx".to_string());
     let force = force.unwrap_or(false);
     let input_stem = PathBuf::from(&input_audio)
         .file_stem()
