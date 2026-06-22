@@ -63,7 +63,7 @@ def main() -> int:
                         'Smaller = finer time resolution + slower run.')
     p.add_argument('--model', default='full', choices=['tiny', 'full'],
                    help='CREPE model size. "full" is accurate but '
-                        'slower; "tiny" is ~10x faster, ~3% worse pitch.')
+                        'slower; "tiny" is ~10x faster, ~3%% worse pitch.')
     p.add_argument('--hysteresis-frames', type=int, default=3,
                    help='Number of consecutive same-pitch frames before '
                         'we accept a note change. Suppresses octave-jump '

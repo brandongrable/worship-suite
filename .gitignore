@@ -51,6 +51,21 @@ scratch/
 **/mdx_extra_q/
 **/mdx/
 
+# audio-separator (UVR) outputs — `<input>_(Vocals)_<model>.{wav,flac}`
+# and `<input>_(Instrumental)_<model>.{wav,flac}`.
+**/*_(Vocals)*.wav
+**/*_(Vocals)*.flac
+**/*_(Instrumental)*.wav
+**/*_(Instrumental)*.flac
+**/*_(Lead Vocals)*.wav
+**/*_(Backing Vocals)*.wav
+
+# DeepFilterNet outputs (`<input>_DeepFilterNet[2|3].wav`)
+**/*_DeepFilterNet*.wav
+
+# extract_melody.py derived MIDI
+**/*_melody.mid
+
 # WhisperX JSON output — derived from an audio input
 **/*_whisperx.json
 
