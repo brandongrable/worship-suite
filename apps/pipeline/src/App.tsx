@@ -312,6 +312,12 @@ export default function App() {
   const [whisperxResult, setWhisperxResult] = useState<WhisperXResult | null>(null);
   const [whisperxErr, setWhisperxErr] = useState<string | null>(null);
   const [whisperxCache, setWhisperxCache] = useState<CacheStatus | null>(null);
+  // Optional path to a plain-text lyric script. When present, the run
+  // button switches from "transcribe" (Whisper guesses words) to
+  // "force-align" (Wav2Vec2 distributes the known words across the
+  // timeline) — eliminates transcription-error noise for songs you
+  // already have the lyrics to.
+  const [whisperxScriptPath, setWhisperxScriptPath] = useState<string | null>(null);
 
   // Auto-probe the cache when the user changes input / output / model.
   // Cheap: filesystem stat only; no subprocess.
@@ -486,6 +492,14 @@ export default function App() {
   async function pickWhisperXOutDir() {
     const selected = await openDialog({ directory: true, multiple: false });
     if (typeof selected === 'string') setWhisperxOutDir(selected);
+  }
+
+  async function pickWhisperXScript() {
+    const selected = await openDialog({
+      multiple: false,
+      filters: [{ name: 'Text', extensions: ['txt', 'md'] }],
+    });
+    if (typeof selected === 'string') setWhisperxScriptPath(selected);
   }
 
   async function runDemucs(force = false) {
@@ -703,13 +717,24 @@ export default function App() {
     setWhisperxResult(null);
     setWhisperxErr(null);
     try {
-      const r = await invoke<WhisperXResult>('whisperx_transcribe', {
-        inputAudio: whisperxInput,
-        outputDir: whisperxOutDir,
-        model: whisperxModel,
-        language: whisperxLanguage,
-        force,
-      });
+      // Two paths: with a lyric script we skip Whisper transcription
+      // and force-align the known text; without one we fall back to
+      // the original transcribe-then-align CLI flow.
+      const r = whisperxScriptPath
+        ? await invoke<WhisperXResult>('whisperx_force_align', {
+            inputAudio: whisperxInput,
+            scriptPath: whisperxScriptPath,
+            outputDir: whisperxOutDir,
+            language: whisperxLanguage,
+            force,
+          })
+        : await invoke<WhisperXResult>('whisperx_transcribe', {
+            inputAudio: whisperxInput,
+            outputDir: whisperxOutDir,
+            model: whisperxModel,
+            language: whisperxLanguage,
+            force,
+          });
       setWhisperxResult(r);
       // Auto-chain: produced JSON feeds the aligner.
       if (r.success && !json) setJson(r.json_path);
@@ -1444,6 +1469,26 @@ export default function App() {
               placeholder="en"
             />
           </div>
+          <PickerRow
+            label="lyric script"
+            value={whisperxScriptPath}
+            placeholder="(optional — picks force-align)"
+            onPick={pickWhisperXScript}
+            disabled={whisperxRunning}
+          />
+          {whisperxScriptPath && (
+            <div className="picker-row">
+              <span className="picker-label"></span>
+              <button
+                className="btn"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => setWhisperxScriptPath(null)}
+                disabled={whisperxRunning}
+              >
+                Clear script (revert to transcribe)
+              </button>
+            </div>
+          )}
         </div>
         <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
           <button
@@ -1452,10 +1497,12 @@ export default function App() {
             disabled={!whisperxInput || !whisperxOutDir || whisperxRunning}
           >
             {whisperxRunning
-              ? 'Transcribing…'
+              ? (whisperxScriptPath ? 'Force-aligning…' : 'Transcribing…')
               : whisperxCache?.cached
                 ? 'Use cached'
-                : 'Run WhisperX'}
+                : whisperxScriptPath
+                  ? 'Force-align with script'
+                  : 'Run WhisperX'}
           </button>
           {whisperxCache?.cached && (
             <>
@@ -1474,7 +1521,9 @@ export default function App() {
         </div>
         <RunningIndicator
           active={whisperxRunning}
-          label={`Transcribing with whisperx (${whisperxModel}, ${whisperxLanguage})…`}
+          label={whisperxScriptPath
+            ? `Force-aligning script with Wav2Vec2 (${whisperxLanguage})…`
+            : `Transcribing with whisperx (${whisperxModel}, ${whisperxLanguage})…`}
           accent="cyan"
         />
         {whisperxErr && <div className="error">{whisperxErr}</div>}

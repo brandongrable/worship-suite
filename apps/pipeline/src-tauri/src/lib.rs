@@ -535,6 +535,81 @@ fn whisperx_transcribe(
     })
 }
 
+/// Path to the bundled force_align_lyrics.py helper. Mirrors the
+/// extract_melody.py layout — lives next to it under apps/pipeline/scripts.
+/// Override with PIPELINE_FORCE_ALIGN_SCRIPT for a packaged install.
+fn force_align_script() -> PathBuf {
+    if let Ok(p) = env::var("PIPELINE_FORCE_ALIGN_SCRIPT") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("scripts")
+        .join("force_align_lyrics.py")
+}
+
+/// Run WhisperX in forced-alignment mode: skip Whisper transcription
+/// entirely and use the Wav2Vec2 align model to distribute a known
+/// lyric script across the audio's timeline. Output JSON shape matches
+/// `whisperx_transcribe` exactly so the aligner can consume either.
+///
+/// `script_path` is a plain-text file of the lyrics in singing order
+/// (line breaks collapsed to spaces). For worship recordings the
+/// producer typically pastes the song's lyric sheet.
+#[tauri::command]
+fn whisperx_force_align(
+    input_audio: String,
+    script_path: String,
+    output_dir: String,
+    language: Option<String>,
+    force: Option<bool>,
+) -> Result<WhisperXResult, String> {
+    let lang = language.unwrap_or_else(|| "en".to_string());
+    let force = force.unwrap_or(false);
+
+    let json_path = whisperx_json_path(&input_audio, &output_dir);
+    if !force && json_path.exists() {
+        return Ok(WhisperXResult {
+            success: true,
+            exit_code: Some(0),
+            stdout: format!("cached: {}", json_path.to_string_lossy()),
+            stderr: String::new(),
+            json_path: json_path.to_string_lossy().to_string(),
+        });
+    }
+
+    let script = force_align_script();
+    if !script.exists() {
+        return Err(format!(
+            "force_align_lyrics.py not found at {} — set PIPELINE_FORCE_ALIGN_SCRIPT or check your install",
+            script.to_string_lossy()
+        ));
+    }
+
+    let output = Command::new(&python_bin())
+        .arg(&script)
+        .arg("--input")
+        .arg(&input_audio)
+        .arg("--script")
+        .arg(&script_path)
+        .arg("--output")
+        .arg(&json_path)
+        .arg("--language")
+        .arg(&lang)
+        .output()
+        .map_err(|e| format!("failed to spawn python: {}", e))?;
+
+    Ok(WhisperXResult {
+        success: output.status.success(),
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        json_path: json_path.to_string_lossy().to_string(),
+    })
+}
+
 #[derive(Serialize)]
 struct StageTool {
     found: bool,
@@ -1606,6 +1681,7 @@ pub fn run() {
             demucs_separate,
             demucs_cache_status,
             whisperx_transcribe,
+            whisperx_force_align,
             whisperx_cache_status,
             demucs_check,
             whisperx_check,
