@@ -72,9 +72,11 @@ def main() -> int:
                    help='Tempo for the output MIDI. Affects only how '
                         'note durations are encoded as ticks; the wall-'
                         'clock timing is preserved exactly.')
-    p.add_argument('--batch-size', type=int, default=512,
+    p.add_argument('--batch-size', type=int, default=128,
                    help='torchcrepe batch size. Bigger = faster on GPU, '
-                        'more RAM. Default safe for any CPU.')
+                        'more RAM. CREPE-full on CPU with batch=512 can '
+                        'use 8GB+ and OOM the machine; 128 keeps peak '
+                        'under ~2GB for typical service-length audio.')
     args = p.parse_args()
 
     # Late imports so --help is fast even when the env is broken.
